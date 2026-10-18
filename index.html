@@ -260,12 +260,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     <button type="button" id="walkBtn" aria-pressed="false">🚶 Walk mode: tell me what I pass</button>
     <p class="muted" id="walkNote" style="font-size:.95rem">Walk mode keeps the camera on and names products as you pass them, saying when one is on your list. It uses more battery. Hold the phone upright at chest height, camera facing the shelves.</p>
     <button type="button" id="tipsBtn">🔊 How to take a good photo</button>
-    <button type="button" id="sampleBtn" aria-expanded="false" aria-controls="samplePanel">🖼 Sample photos</button>
-    <div class="panel" id="samplePanel" hidden>
-      <h2 id="sampleH">Sample photos</h2>
-      <p class="muted" id="sampleNote"></p>
-      <div class="samples" id="sampleList" role="group" aria-labelledby="sampleH"></div>
-    </div>
+    <button type="button" id="sampleBtn">🖼 Sample photo</button>
 
     <div class="status" id="statusBox"><span class="ic" id="statusIc" aria-hidden="true">💬</span><span id="statusText">Choose Find product or Compare prices, then tap Check.</span></div>
     <button type="button" id="retryBtn" hidden>↻ Try again</button>
@@ -321,7 +316,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     </div>
     <div class="panel">
       <h2>Preview</h2>
-      <div class="status"><span class="ic" aria-hidden="true">✓</span><span>Possibly whole milk, 1 litre. Fairly sure.</span></div>
+      <div class="status"><span class="ic" aria-hidden="true">✓</span><span>This is whole milk, 1 litre.</span></div>
       <button type="button" id="testVoice">🔊 Test voice</button>
       <p class="muted" id="voiceNote" style="font-size:.95rem">No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up.</p>
     </div>
@@ -443,7 +438,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     if (!window.speechSynthesis) { n.textContent = "This viewer can't produce speech. Open GuideCart in Safari, or turn on VoiceOver and choose Screen reader above."; return; }
     if (settings.voice !== "app") { n.textContent = `Spoken results are set to "${settings.voice === "sr" ? "Screen reader" : "Off"}". Choose App voice above to hear GuideCart's own voice.`; return; }
     n.textContent = "No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up.";
-    say("Possibly whole milk, 1 litre. Fairly sure.");
+    say("This is whole milk, 1 litre.");
   };
 
   // ---------- Navigation ----------
@@ -616,6 +611,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
 `You are the vision part of an app for BLIND shoppers. The image is from their phone camera in a supermarket. The user cannot see the screen or the product, so never ask them to look at anything.
 Shopping list: ${JSON.stringify(list)}.
 Identify the single main product in view. Do not guess beyond what is visible.
+Confidence: "high" when the product name is clearly printed or the item is unmistakable (e.g. a clear photo of bananas or a labelled milk bottle); "medium" when you are inferring from shape or a partly visible label; "low" only when the image is genuinely unclear.
 If you cannot identify a product, say plainly what the image shows instead (e.g. "a blurry shelf", "the floor", "a hand covering the lens", "the back of a box with only a barcode").
 "guidance" must be one short instruction a blind person can follow by touch and movement only: distances in centimetres, "turn the product a quarter turn", "move the phone up/left", "hold the product in your other hand", "hold still for two seconds". Use null if nothing is needed.
 Reply with ONLY JSON:
@@ -877,25 +873,19 @@ Reply with ONLY JSON:
     C("Easy peelers 600 g, £2.60", "easy-peelers"), C("Free range eggs, 12, £3.35", "eggs"),
     C("Pink Lady apples, 4 pack, £2.75", "pink-lady"), C("Red onions, 3 pack, £1.00", "red-onions"),
   ];
-  function renderSamples() {
-    const list = $("sampleList"); list.innerHTML = "";
-    $("sampleNote").textContent = mode === "find"
-      ? "Real product photos. The AI reads each one live, with no pre-written answers."
-      : "Real product listings with price and size. Pick one for label A, then one for label B, for example the two semi-skimmed milks.";
-    (mode === "find" ? FIND_SAMPLES : COMPARE_SAMPLES).forEach(s => {
-      const b = document.createElement("button"); b.type = "button"; b.textContent = s.label;
-      b.onclick = async () => {
-        if (stream) stopCamera(true);
-        let c;
-        try { c = await s.make(); } catch (_) { status("error", "That sample photo couldn't be loaded. Try another one."); return; }
-        showPreview(c.toDataURL("image/jpeg", 0.9)); runCheck(c, !s.check);
-      };
-      list.append(b);
-    });
-  }
-  $("sampleBtn").onclick = () => {
-    const p = $("samplePanel"); p.hidden = !p.hidden; $("sampleBtn").setAttribute("aria-expanded", String(!p.hidden));
-    if (!p.hidden) { renderSamples(); say(`${mode === "find" ? FIND_SAMPLES.length + " sample products" : COMPARE_SAMPLES.length + " sample price labels"} listed below.`); }
+  // Each tap shows the next real sample photo and the AI reads it live.
+  const sampleIdx = { find: 0, compare: 0 };
+  const demoSamples = () => mode === "find" ? FIND_SAMPLES.filter(s => !s.check && s.label !== "Back of a box") : COMPARE_SAMPLES;
+  function sampleLabel() { const list = demoSamples(); return `🖼 Sample photo (${(sampleIdx[mode] % list.length) + 1} of ${list.length})`; }
+  $("sampleBtn").onclick = async () => {
+    if (busy) return;
+    if (stream) stopCamera(true);
+    const list = demoSamples(), s = list[sampleIdx[mode] % list.length];
+    $("sampleBtn").textContent = sampleLabel();
+    sampleIdx[mode]++;
+    let c;
+    try { c = await s.make(); } catch (_) { status("error", "That sample photo couldn't be loaded. Tap Sample photo again for the next one."); return; }
+    showPreview(c.toDataURL("image/jpeg", 0.9)); runCheck(c, true);
   };
   $("tipsBtn").onclick = () => say(mode === "find" ? TURN_TIP : SHELF_TIP);
 
@@ -910,14 +900,14 @@ Reply with ONLY JSON:
     mode = m; $("modeFind").setAttribute("aria-pressed", String(m === "find")); $("modeCompare").setAttribute("aria-pressed", String(m === "compare"));
     $("checkBtn").textContent = m === "find" ? "📷 Check product" : "📷 Read price label";
     $("findResult").hidden = m !== "find"; $("compareArea").hidden = m !== "compare";
-    if (!$("samplePanel").hidden) renderSamples();
+    $("sampleBtn").textContent = "🖼 Sample photo";
     if (m === "compare") { renderCompare(); status("info", nextLabel() ? `Point at price label ${nextLabel()} and tap Read price label.` : "Both labels read. Confirm each one to compare."); }
     else status("info", "Hold a product about 30 centimetres from the phone and tap Check product.");
   }
   $("modeFind").onclick = () => setMode("find");
   $("modeCompare").onclick = () => setMode("compare");
 
-  function setBusy(b) { busy = b; $("checkBtn").disabled = b; $("sampleList").querySelectorAll("button").forEach(x => x.disabled = b); }
+  function setBusy(b) { busy = b; $("checkBtn").disabled = b; $("sampleBtn").disabled = b; }
   function errorFor(e) {
     const code = e && e.code;
     if (code === "rate_limited") return "Too many checks in a short time. Wait a minute, then try again.";
@@ -966,7 +956,8 @@ Reply with ONLY JSON:
     } catch (_) {}
     return null;
   }
-  const CONF = { high: ["✓", "Fairly sure"], medium: ["~", "Not completely sure"], low: ["?", "Not sure"] };
+  const CONF = { high: ["✓", "Confident"], medium: ["~", "Probably"], low: ["?", "Not sure"] };
+  const LEAD = { high: (d) => `This is ${d}.`, medium: (d) => `Probably ${d}.`, low: (d) => `I'm not sure, but it might be ${d}.` };
   function showMatch(r) {
     const box = $("findResult"); box.innerHTML = "";
     if (!r || !r.readable || !r.product) {
@@ -976,13 +967,14 @@ Reply with ONLY JSON:
       return;
     }
     const conf = CONF[r.confidence] || CONF.low;
-    const desc = [r.brand, r.product, r.size].filter(x => x && x !== "null").join(", ");
+    const ok = (x) => x && x !== "null";
+    const desc = r.product + (ok(r.brand) && !norm(r.product).includes(norm(r.brand)) ? " by " + r.brand : "") + (ok(r.size) ? ", " + r.size : "");
     const match = r.list_match && pending().find(i => norm(i.name) === norm(r.list_match) || norm(r.list_match).includes(norm(i.name)) || norm(i.name).includes(norm(r.list_match)));
     const card = document.createElement("div"); card.className = "result";
     card.innerHTML = `<span class="conf ${r.confidence === "high" ? "" : "low"}"><span aria-hidden="true">${conf[0]}</span> ${conf[1]}</span><div class="what"></div><p class="muted why"></p>`;
-    card.querySelector(".what").textContent = "Possibly " + desc;
+    card.querySelector(".what").textContent = cap(desc);
     card.querySelector(".why").textContent = r.why_unsure && r.why_unsure !== "null" ? r.why_unsure : "";
-    let spoken = `Possibly ${desc}. ${conf[1]}.`;
+    let spoken = (LEAD[r.confidence] || LEAD.low)(desc);
     if (r.confidence !== "high" && r.guidance && r.guidance !== "null") spoken += " " + r.guidance;
     if (match) {
       const q = document.createElement("p"); q.style.fontWeight = "700"; q.textContent = `Is this the ${match.name} on your list?`;
