@@ -1139,20 +1139,20 @@ Reply with ONLY JSON:
   }
   const P = (label, file) => ({ label, make: () => photo(file + ".jpg") });
   const FIND_SAMPLES = [
-    P("Semi-skimmed milk", "semi-milk-4pt"), P("Whole milk", "whole-milk-4pt"), P("Cravendale milk 2 L", "cravendale-2l"),
-    P("Free range eggs", "eggs"), P("Bananas", "bananas-ocado"), P("Organic bananas", "bananas-organic"),
-    P("Carrots", "carrots"), P("Broccoli", "broccoli"), P("Chopped tomatoes", "chopped-tomatoes"),
-    P("Cucumber", "cucumber"), P("Easy peelers", "easy-peelers"), P("Red onions", "red-onions"),
-    P("Brown onions", "brown-onions"), P("Pink Lady apples", "pink-lady"),
+    P("Semi-skimmed milk", "ref-semi-milk"), P("Cravendale milk", "ref-cravendale"), P("Bananas", "ref-bananas"),
+    P("Free range eggs", "ref-eggs"), P("Cucumber", "ref-cucumber"), P("Red seedless grapes", "ref-grapes"),
+    P("Salted butter", "ref-butter"), P("Wild rocket", "ref-rocket"), P("Red onions", "ref-red-onions"),
+    P("Brown onions", "ref-brown-onions"),
     { label: "Back of a box", make: async () => drawBack() },
-    { label: "Blurry photo", make: () => blurred("semi-milk-2pt.jpg"), check: true },
+    { label: "Blurry photo", make: () => blurred("ref-semi-milk.jpg"), check: true },
   ];
   const C = (label, file) => ({ label, make: () => photo(file + "-label.jpg") });
-  // Six listings where the price and pack size are clearly visible, in pairs worth comparing
+  // Two pairs from full product pages, with price and pack size clearly visible
   const COMPARE_SAMPLES = [
-    C("Semi-skimmed milk 4 pints, £1.65", "semi-milk-4pt"), C("Semi-skimmed milk 2 pints, £1.20", "semi-milk-2pt"),
-    C("Whole milk 4 pints, £1.65", "whole-milk-4pt"), C("Cravendale milk 2 L, £2.65", "cravendale-2l"),
-    C("Bananas, 5 pack, £0.95", "bananas-ocado"), C("Fyffes bananas, 5 pack, £0.78", "bananas-fyffes"),
+    { label: "Semi-skimmed milk 4 pints, £1.65", make: () => photo("ref-semi-milk.jpg") },
+    { label: "Cravendale milk 2 L, £2.65", make: () => photo("ref-cravendale.jpg") },
+    { label: "Red onions, 3 pack, £1.00", make: () => photo("ref-red-onions.jpg") },
+    { label: "Brown onions, 3 pack, £1.00", make: () => photo("ref-brown-onions.jpg") },
   ];
   // Each tap shows the next real sample photo and the AI reads it live.
   const sampleIdx = { find: 0, compare: 0, read: 0 };
