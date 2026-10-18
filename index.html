@@ -651,8 +651,11 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   async function ocrLines(canvas) {
     const w = await getWorker();
     const { data } = await w.recognize(prepForOcr(canvas));
-    return String(data.text || "").split(/\n+/).map(l => l.replace(/\s+/g, " ").trim())
-      .filter(l => l.length > 1 && (l.match(/[A-Za-z0-9£€$%]/g) || []).length / l.length > 0.6);
+    const src = (data.lines && data.lines.length) ? data.lines.map(l => ({ text: l.text, conf: l.confidence })) : String(data.text || "").split(/\n+/).map(x => ({ text: x, conf: 70 }));
+    return src.map(l => ({ text: String(l.text).replace(/\s+/g, " ").trim(), conf: l.conf }))
+      .filter(l => l.conf >= 60 && l.text.length > 1 && (l.text.match(/[A-Za-z0-9£€$%.,]/g) || []).length / l.text.length > 0.75
+        && (l.text.match(/[A-Za-z]{3,}/g) || []).some(w => /[aeiouy]/i.test(w)))
+      .map(l => l.text);
   }
   async function ocrText(canvas) { return (await ocrLines(canvas)).join(" "); }
   // Long text is spoken in short pieces, so phones don't cut it off
@@ -679,11 +682,22 @@ Reply with ONLY JSON:
 {"readable": true|false, "seen": "what the image actually shows, in a few words", "product": "short product description, e.g. whole milk, or null", "brand": "brand or null", "size": "pack size as printed, e.g. 1 L, or null", "confidence": "high|medium|low", "list_match": "the matching item from the list, or null", "why_unsure": "short reason if confidence is not high, else null", "guidance": "touch-based instruction or null"}`;
       return await sample.json(prompt, { images: await toBlob(canvas), modelTier: "default", cache: false });
     }
-    const text = await ocrText(canvas);
-    if (text.length < 3) return { readable: false, seen: "no printed words", guidance: TURN_TIP };
-    const match = list.find(i => norm(text).includes(norm(i))) || null;
+    // On-phone fallback: combine object detection with printed words, and only report real grocery words
+    await loadWalkAI();
+    let objectName = null;
+    if (detector) {
+      const preds = (await detector.detect(canvas, 5, 0.5)).filter(p => PRODUCT_CLASSES.has(p.class));
+      preds.sort((a, b) => b.score - a.score);
+      if (preds[0]) objectName = (COCO_NAMES[preds[0].class] || preds[0].class).replace(/^an? /, "");
+    }
+    const text = (await ocrLines(canvas)).join(" ");
+    const words = [...new Set((norm(text).match(/[a-z]{3,}/g) || []).filter(w => GROCERY_SET.has(w)))];
+    const named = words.map(w => PRETTY[w] || w);
+    if (!named.length && !objectName) return { readable: false, seen: text ? "some print, but no product name I can recognise" : "no product I can recognise", guidance: TURN_TIP };
+    const product = named.length ? named.slice(0, 3).join(" ") : objectName;
+    const match = list.find(i => [product, ...named].some(n => stem(n).includes(stem(i)) || stem(i).includes(stem(n)))) || null;
     const size = (text.match(/\d+(?:[.,]\d+)?\s?(?:kg|g|ml|l|litre|litres|pints?)\b/i) || [null])[0];
-    return { readable: true, product: match ? match : text.slice(0, 60), brand: null, size, confidence: match ? "medium" : "low", list_match: match, why_unsure: "Read from the printed text only." };
+    return { readable: true, product, brand: null, size, confidence: match ? "high" : "medium", list_match: match, why_unsure: null };
   }
   async function readLabel(canvas) {
     if (claudeVision) {
@@ -699,7 +713,8 @@ Reply with ONLY JSON:
     const pm = text.match(/£\s?(\d+(?:[.,]\d{1,2})?)/) || text.match(/(\d+[.,]\d{2})/);
     const qm = text.match(/(\d+(?:[.,]\d+)?)\s?(kg|g|ml|l)\b/i);
     if (!pm && !qm) return { readable: false, seen: text ? "some text, but no price" : "no printed words", guidance: SHELF_TIP };
-    return { readable: true, product: text.slice(0, 40), price: pm ? parseFloat(pm[1].replace(",", ".")) : null,
+    const pname = [...new Set((norm(text).match(/[a-z]{3,}/g) || []).filter(w => GROCERY_SET.has(w)))].map(w => PRETTY[w] || w).slice(0, 3).join(" ");
+    return { readable: true, product: pname || "product", price: pm ? parseFloat(pm[1].replace(",", ".")) : null,
       quantity: qm ? parseFloat(qm[1].replace(",", ".")) : null, unit: qm ? qm[2].toLowerCase() : null };
   }
 
@@ -862,7 +877,7 @@ Reply with ONLY JSON:
       let box = null;
       const wantText = mode !== "find";
       if (!wantText && detector) {
-        const preds = (await detector.detect(video, 5, 0.5)).filter(p => p.class !== "person" && p.class !== "dining table");
+        const preds = (await detector.detect(video, 5, 0.5)).filter(p => PRODUCT_CLASSES.has(p.class));
         preds.sort((a, b) => b.bbox[2] * b.bbox[3] - a.bbox[2] * a.bbox[3]);
         if (preds[0]) { const [x, y, w, h] = preds[0].bbox; box = { x: x / W, y: y / H, w: w / W, h: h / H }; }
       }
@@ -870,7 +885,7 @@ Reply with ONLY JSON:
         const c = document.createElement("canvas"), sc = Math.min(1, 800 / W); c.width = Math.round(W * sc); c.height = Math.round(H * sc);
         c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
         const { data } = await ocrWorker.recognize(c);
-        const words = (data.words || []).filter(w => w.confidence > 60 && w.text.replace(/[^A-Za-z0-9£]/g, "").length > 1);
+        const words = (data.words || []).filter(w => w.confidence > 75 && /[A-Za-z]{3,}|£\d/.test(w.text));
         if (words.length >= 2) {
           const x0 = Math.min(...words.map(w => w.bbox.x0)), y0 = Math.min(...words.map(w => w.bbox.y0));
           const x1 = Math.max(...words.map(w => w.bbox.x1)), y1 = Math.max(...words.map(w => w.bbox.y1));
@@ -885,7 +900,7 @@ Reply with ONLY JSON:
       aimNoneSince = Date.now();
       const cx = box.x + box.w / 2, cy = box.y + box.h / 2, area = box.w * box.h;
       const mv = viaGlasses ? { l: "Turn your head a little to the left.", r: "Turn your head a little to the right.", u: "Tilt your head up a little.", d: "Tilt your head down a little.", near: "Step a little closer.", far: "Step back a little." }
-                            : { l: "Move the phone a little to the left.", r: "Move the phone a little to the right.", u: "Move the phone up a little.", d: "Move the phone down a little.", near: "Move a little closer.", far: "Move back a little." };
+                            : { l: "It's on the left of the picture. Move the phone a little to the left.", r: "It's on the right of the picture. Move the phone a little to the right.", u: "It's near the top. Move the phone up a little.", d: "It's near the bottom. Move the phone down a little.", near: "It's too small. Move the phone a little closer.", far: "It's too close. Move the phone back a little." };
       let tip = null;
       if (cx < 0.33) tip = mv.l; else if (cx > 0.67) tip = mv.r;
       else if (cy < 0.3) tip = mv.u; else if (cy > 0.7) tip = mv.d;
@@ -908,6 +923,7 @@ Reply with ONLY JSON:
   const GROCERY = "milk eggs egg bread butter cheese yogurt yoghurt cream tomatoes tomato pasta penne spaghetti rice beans coffee tea sugar flour cereal oats porridge juice water cola lemonade chocolate biscuits crisps soup tuna chicken beef ham bacon sausages fish salmon apples apple bananas banana oranges orange grapes lemons lemon limes strawberries blueberries peelers satsumas clementines carrots carrot potatoes potato onions onion broccoli cucumber lettuce salad peppers pepper mushrooms garlic avocado spinach cabbage courgette oil vinegar ketchup mayonnaise honey jam peanut noodles pizza cravendale semi skimmed whole".split(" ");
   const GROCERY_SET = new Set(GROCERY);
   const PRETTY = { semi: "semi-skimmed milk", skimmed: "skimmed milk", whole: "whole milk", cravendale: "Cravendale milk", peelers: "easy peelers", egg: "eggs", penne: "penne pasta" };
+  const PRODUCT_CLASSES = new Set(["bottle", "cup", "bowl", "wine glass", "banana", "apple", "orange", "broccoli", "carrot", "sandwich", "pizza", "donut", "cake", "hot dog", "book", "vase"]);
   // Every object the on-phone model knows (COCO, 80 kinds), in plain spoken English
   const COCO_NAMES = { person: "a person", bicycle: "a bicycle", car: "a car", motorcycle: "a motorbike", bus: "a bus", truck: "a lorry", "traffic light": "a traffic light", "stop sign": "a stop sign", bench: "a bench", bird: "a bird", cat: "a cat", dog: "a dog", backpack: "a backpack", umbrella: "an umbrella", handbag: "a handbag", suitcase: "a suitcase", "sports ball": "a ball", bottle: "a bottle", "wine glass": "a glass", cup: "a cup", fork: "a fork", knife: "a knife", spoon: "a spoon", bowl: "a bowl", banana: "bananas", apple: "apples", sandwich: "a sandwich", orange: "oranges", broccoli: "broccoli", carrot: "carrots", "hot dog": "a hot dog", pizza: "pizza", donut: "doughnuts", cake: "cake", chair: "a chair", couch: "a sofa", "potted plant": "a plant", bed: "a bed", "dining table": "a table", toilet: "a toilet", tv: "a screen", laptop: "a laptop", mouse: "a computer mouse", remote: "a remote control", keyboard: "a keyboard", "cell phone": "a phone", microwave: "a microwave", oven: "an oven", toaster: "a toaster", sink: "a sink", refrigerator: "a fridge", book: "a book", clock: "a clock", vase: "a vase", scissors: "scissors", "teddy bear": "a teddy bear", "hair drier": "a hair dryer", toothbrush: "a toothbrush", tie: "a tie", kite: "a kite", skateboard: "a skateboard", "tennis racket": "a tennis racket", horse: "a horse", sheep: "a sheep", cow: "a cow", boat: "a boat", train: "a train", airplane: "a plane", "fire hydrant": "a fire hydrant", "parking meter": "a parking meter", frisbee: "a frisbee", skis: "skis", snowboard: "a snowboard", "baseball bat": "a bat", "baseball glove": "a glove", surfboard: "a surfboard", elephant: "an elephant", bear: "a bear", zebra: "a zebra", giraffe: "a giraffe" };
   const stem = (w) => norm(w).replace(/(es|s)$/, "");
