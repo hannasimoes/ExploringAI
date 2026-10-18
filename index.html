@@ -11,6 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="GuideCart">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
@@ -132,6 +133,7 @@ ul.items button { width: 48px; min-height: 48px; height: 48px; padding: 0; borde
 .samples { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .samples button { min-height: 64px; font-size: .95rem; padding: 8px 10px; }
 @media (max-width: 360px) { .samples { grid-template-columns: 1fr; } }
+#walkBtn[aria-pressed="true"] { background: var(--alert); border-color: var(--alert); color: #ffffff; }
 .label-card { border: 2px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 10px; }
 .label-card.best { border: 3px solid var(--primary); }
 .fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
@@ -255,10 +257,8 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <button type="button" id="camBtn">▶ Live camera</button>
       <label class="btn file-btn">🖼 Take photo<input id="photoInput" type="file" accept="image/*" capture="environment"></label>
     </div>
-    <label class="toggle panel" style="padding:12px 16px" for="autoCheck" id="autoWrap" hidden>
-      <span><strong>Check automatically every 6 seconds</strong><br><span class="muted">Uses more battery and AI requests.</span></span>
-      <input type="checkbox" id="autoCheck">
-    </label>
+    <button type="button" id="walkBtn" aria-pressed="false">🚶 Walk mode: tell me what I pass</button>
+    <p class="muted" id="walkNote" style="font-size:.95rem">Walk mode keeps the camera on and names products as you pass them, saying when one is on your list. It uses more battery. Hold the phone upright at chest height, camera facing the shelves.</p>
     <button type="button" id="tipsBtn">🔊 How to take a good photo</button>
     <button type="button" id="sampleBtn" aria-expanded="false" aria-controls="samplePanel">🖼 Sample photos</button>
     <div class="panel" id="samplePanel" hidden>
@@ -606,7 +606,7 @@ Reply with ONLY JSON:
   const money = (n) => "£" + n.toFixed(2);
 
   // ---------- Camera (M04) ----------
-  let stream = null, autoTimer = null;
+  let stream = null;
   const video = $("video"), preview = $("preview");
   async function startCamera() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { noLiveCamera("no-api"); return false; }
@@ -615,7 +615,7 @@ Reply with ONLY JSON:
     } catch (e) { noLiveCamera(e && e.name === "NotAllowedError" ? "denied" : "blocked"); return false; }
     video.srcObject = stream; video.hidden = false; preview.hidden = true; $("camHint").hidden = true;
     await video.play().catch(() => {});
-    $("camChip").textContent = "● Live"; $("camBtn").textContent = "■ Stop camera"; $("autoWrap").hidden = false;
+    $("camChip").textContent = "● Live"; $("camBtn").textContent = "■ Stop camera";
     status("ok", "Camera on. The camera is on the back of the phone, at the top. " + (mode === "find" ? "Hold the product about 30 centimetres in front of it and tap Check product." : "Point it at the price label, about 20 centimetres away, and tap Read price label."));
     return true;
   }
@@ -626,18 +626,112 @@ Reply with ONLY JSON:
     status("warn", msg);
   }
   function stopCamera(silent) {
-    clearInterval(autoTimer); autoTimer = null; $("autoCheck").checked = false;
+    stopWalk(true);
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    video.hidden = true; $("autoWrap").hidden = true; $("camBtn").textContent = "▶ Live camera"; $("camChip").textContent = "Camera off";
+    video.hidden = true; $("camBtn").textContent = "▶ Live camera"; $("camChip").textContent = "Camera off";
     if (preview.hidden) $("camHint").hidden = false;
     if (!silent) status("info", "Camera off.");
   }
   $("camBtn").onclick = () => stream ? stopCamera(false) : startCamera();
-  $("autoCheck").onchange = (e) => {
-    clearInterval(autoTimer); autoTimer = null;
-    if (e.target.checked) { autoTimer = setInterval(() => { if (!busy && stream && !awaitingConfirm) runCheck(); }, 6000); say("Automatic checking on."); }
-    else say("Automatic checking off.");
-  };
+  // ---------- Walk mode: camera always on, names products as the shopper passes them ----------
+  // On-phone AI, frame by frame: COCO-SSD object detection (loose fruit, veg, bottles)
+  // plus Tesseract text reading (names printed on packs and shelf labels).
+  const GROCERY = "milk eggs egg bread butter cheese yogurt yoghurt cream tomatoes tomato pasta penne spaghetti rice beans coffee tea sugar flour cereal oats porridge juice water cola lemonade chocolate biscuits crisps soup tuna chicken beef ham bacon sausages fish salmon apples apple bananas banana oranges orange grapes lemons lemon limes strawberries blueberries peelers satsumas clementines carrots carrot potatoes potato onions onion broccoli cucumber lettuce salad peppers pepper mushrooms garlic avocado spinach cabbage courgette oil vinegar ketchup mayonnaise honey jam peanut noodles pizza cravendale semi skimmed whole".split(" ");
+  const GROCERY_SET = new Set(GROCERY);
+  const PRETTY = { semi: "semi-skimmed milk", skimmed: "skimmed milk", whole: "whole milk", cravendale: "Cravendale milk", peelers: "easy peelers", egg: "eggs", penne: "penne pasta" };
+  const COCO_NAMES = { banana: "bananas", apple: "apples", orange: "oranges", broccoli: "broccoli", carrot: "carrots", bottle: "a bottle", sandwich: "a sandwich", pizza: "pizza", cake: "cake", donut: "doughnuts" };
+  const stem = (w) => norm(w).replace(/(es|s)$/, "");
+  const onList = (name) => pending().find(i => { const a = stem(i.name), b = stem(name); return a && b && (a.includes(b) || b.includes(a)); });
+  let walking = false, walkTimer = null, walkBusy = false, walkTick = 0, lastHeard = {}, detector = null, ocrWorker = null;
+  async function loadWalkAI() {
+    const jobs = [];
+    if (!detector) jobs.push((async () => {
+      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js");
+      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js");
+      detector = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+    })().catch(() => { detector = null; }));
+    if (!ocrWorker) jobs.push((async () => {
+      await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js");
+      ocrWorker = await Tesseract.createWorker("eng");
+    })().catch(() => { ocrWorker = null; }));
+    await Promise.all(jobs);
+    return !!(detector || ocrWorker);
+  }
+  const side = (x) => x < 0.36 ? "on your left" : x > 0.64 ? "on your right" : "ahead";
+  function walkFrame() {
+    const vw = video.videoWidth, vh = video.videoHeight, cw = vw * 0.9, chh = vh * 0.8;
+    const c = document.createElement("canvas"); const scale = Math.min(1, 900 / cw);
+    c.width = Math.round(cw * scale); c.height = Math.round(chh * scale);
+    c.getContext("2d").drawImage(video, (vw - cw) / 2, (vh - chh) / 2, cw, chh, 0, 0, c.width, c.height);
+    return c;
+  }
+  async function walkStep() {
+    if (!walking || walkBusy || !video.videoWidth) return;
+    walkBusy = true;
+    try {
+      const found = [];
+      if (detector) {
+        const preds = await detector.detect(video, 6, 0.55);
+        preds.forEach(p => { const n = COCO_NAMES[p.class]; if (n) found.push({ name: n, x: (p.bbox[0] + p.bbox[2] / 2) / video.videoWidth }); });
+      }
+      if (ocrWorker && walkTick++ % 2 === 0) {
+        const c = walkFrame();
+        const { data } = await ocrWorker.recognize(c);
+        (data.words || []).forEach(w => {
+          const word = norm(w.text).replace(/[^a-z]/g, "");
+          if (word.length > 2 && GROCERY_SET.has(word) && w.confidence > 55) found.push({ name: PRETTY[word] || word, x: ((w.bbox.x0 + w.bbox.x1) / 2) / c.width });
+        });
+      }
+      announceWalk(found);
+    } catch (_) {}
+    walkBusy = false;
+  }
+  function announceWalk(found) {
+    if (!walking || !found.length) return;
+    const now = Date.now(), seenNow = {};
+    found.forEach(f => { if (!seenNow[f.name]) seenNow[f.name] = f; });
+    const fresh = Object.values(seenNow).filter(f => !lastHeard[f.name] || now - lastHeard[f.name] > 10000);
+    if (!fresh.length) return;
+    const listed = fresh.filter(f => onList(f.name)), others = fresh.filter(f => !onList(f.name));
+    const talking = window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending);
+    if (!listed.length && talking) return; // don't pile up chatter
+    fresh.forEach(f => { lastHeard[f.name] = now; });
+    const parts = listed.map(f => `${cap(f.name)}, ${side(f.x)}. That's on your list!`);
+    if (others.length) parts.push("Passing " + others.slice(0, 3).map(f => f.name).join(", ") + ".");
+    const msg = parts.join(" ");
+    $("statusIc").textContent = listed.length ? "★" : "🚶";
+    $("statusText").textContent = msg;
+    $("statusBox").classList.remove("error");
+    if (listed.length) { try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {} }
+    if (settings.voice === "sr") { $("live").textContent = msg; return; }
+    if (settings.voice === "off" || !window.speechSynthesis) return;
+    if (listed.length && talking) speechSynthesis.cancel();
+    setTimeout(() => {
+      const u = new SpeechSynthesisUtterance(msg); u.lang = "en-GB"; if (voice) u.voice = voice; u.rate = 1.05;
+      speechSynthesis.speak(u);
+    }, listed.length && talking ? 150 : 0);
+  }
+  async function startWalk() {
+    if (!stream) { const ok = await startCamera(); if (!ok) return; }
+    walking = true; lastHeard = {};
+    $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; $("camChip").textContent = "● Walk mode";
+    status("busy", "Starting walk mode. Getting the on-phone AI ready, this takes a few seconds the first time.");
+    const ok = await loadWalkAI();
+    if (!walking) return;
+    if (!ok) { status("error", "Walk mode couldn't load its AI. Check your internet connection, then try again.", { retry: startWalk }); stopWalk(true); return; }
+    status("ok", "Walk mode on. Walk slowly with the phone upright at chest height, camera facing the shelves. I'll name products as you pass, and tell you when one is on your list.");
+    clearInterval(walkTimer); walkTimer = setInterval(walkStep, 900);
+  }
+  function stopWalk(silent) {
+    const was = walking;
+    walking = false; clearInterval(walkTimer); walkTimer = null;
+    $("walkBtn").setAttribute("aria-pressed", "false"); $("walkBtn").textContent = "🚶 Walk mode: tell me what I pass";
+    if (stream) $("camChip").textContent = "● Live";
+    if (was && !silent) status("info", "Walk mode off.");
+  }
+  $("walkBtn").onclick = () => walking ? stopWalk(false) : startWalk();
+  document.addEventListener("visibilitychange", () => { if (document.hidden && walking) stopWalk(true); });
+
   function grab() {
     const c = document.createElement("canvas"); c.width = video.videoWidth; c.height = video.videoHeight;
     c.getContext("2d").drawImage(video, 0, 0); return c;

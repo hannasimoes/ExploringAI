@@ -22,6 +22,7 @@ No account, no install and no app store needed.
 | My list | Type items separated by commas, or dictate them. The list is saved on the phone. |
 | Shop → Find product | The live camera (or a photo) captures a product. The AI reads it and says, for example, "Possibly semi-skimmed milk, 4 pints. Fairly sure. Is this the milk on your list?" The item is ticked off only after you tap **Yes**. |
 | Shop → Compare prices | Read two price labels. GuideCart reads the price and pack size aloud, you confirm or correct them, and it says which is better value per kg, litre or item. It never compares weight with volume. |
+| Shop → Walk mode | The camera stays on while you walk down the aisle. GuideCart names products as you pass them ("Passing tomatoes, carrots") and tells you when one is on your list ("Milk, on your right. That's on your list!"). |
 | Settings | Spoken results (app voice, screen reader or off), text and button size, theme, high contrast and reduced motion. |
 
 Every button says its name aloud when tapped (in App voice mode). Every instruction is spoken and uses touch and distance ("hold the product about 30 cm from the phone, roughly the length of your forearm"), never "look at the screen".
@@ -33,6 +34,7 @@ Every button says its name aloud when tapped (in App voice mode). Every instruct
 - **AI services:**
   - **Claude Vision** (Anthropic) when the app is opened inside Claude: reads products, brands, sizes and prices from the photo and reports its confidence.
   - **Tesseract.js** OCR on the phone when opened from GitHub Pages: reads the printed text on packs and labels. Photos never leave the phone.
+- **Walk mode:** about once a second the live frame goes through COCO-SSD object detection (TensorFlow.js, for loose fruit, vegetables and bottles) and, every other frame, Tesseract text reading (for names printed on packs and shelf labels). Matches against a grocery vocabulary and the shopping list are spoken, with repeats suppressed for 10 seconds. Everything runs on the phone; no images are sent anywhere.
 - **On-phone image check:** before using the AI, the app checks whether a photo is too dark, too bright or blurry, and tells the user how to fix it.
 - **Speech:** the browser's built-in speech synthesis (British English voice); dictation uses the browser's speech recognition where available, with the keyboard microphone as a fallback.
 - **Storage:** the list and settings are kept in the phone's browser storage. Nothing is stored on a server.
@@ -65,6 +67,7 @@ The test reads the functions directly from `index.html` and checks unit conversi
 
 - The AI can be wrong. GuideCart always states its confidence and asks for confirmation.
 - It does not guide people around the shop or warn about obstacles.
+- Walk mode only names what it can read or recognise; it will miss products whose names are not facing the camera, and it uses more battery.
 - In GitHub Pages mode, recognition relies on printed text, so loose fruit and vegetables without a label are hard to identify. Claude Vision handles these much better.
 - iPhone websites cannot vibrate or be controlled by Siri; these need a native app (a possible next phase with React Native or Swift).
 - The voice depends on the phone: on iPhone it is silent while the silent switch is on.
