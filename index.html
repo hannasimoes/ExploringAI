@@ -117,6 +117,7 @@ ul.items button { width: 48px; min-height: 48px; height: 48px; padding: 0; borde
 .camera { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--cam); aspect-ratio: 4 / 5; max-width: 100%; }
 .camera video, .camera img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .camera .hint { position: absolute; inset: 0; display: grid; place-items: center; padding: 28px; text-align: center; color: #d9e6dc; }
+#boxes { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .frame { position: absolute; inset: 14%; border: 3px dashed rgba(86, 180, 233, .85); border-radius: 18px; pointer-events: none; }
 .chip { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); background: var(--surface); color: var(--ink); font-weight: 700; font-size: .85rem; padding: 4px 12px; border-radius: 999px; white-space: nowrap; }
 .file-btn { position: relative; }
@@ -259,6 +260,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     <div class="camera">
       <video id="video" playsinline muted hidden></video>
       <img id="preview" alt="" hidden>
+      <canvas id="boxes" aria-hidden="true"></canvas>
       <div class="frame" aria-hidden="true"></div>
       <span class="chip" id="camChip" aria-hidden="true">Camera off</span>
       <div class="hint" id="camHint">Hold the product about 30 cm from the phone, roughly the length of your forearm.</div>
@@ -279,7 +281,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     </div>
     <button type="button" id="aimBtn" aria-pressed="true" hidden>🎯 Aim guide: on</button>
     <button type="button" id="walkBtn" aria-pressed="false">🚶 Walk mode: tell me what I pass</button>
-    <p class="muted" id="walkNote" style="font-size:.95rem">Walk mode keeps the camera on and names products as you pass them, saying when one is on your list. It uses more battery. Hold the phone upright at chest height, camera facing the shelves.</p>
+    <p class="muted" id="walkNote" style="font-size:.95rem">Walk mode keeps the camera on and describes what's around you as you move: products, people, chairs, tables and more, and says when something is on your list. It uses more battery. Hold the phone upright at chest height, camera facing the shelves.</p>
     <button type="button" id="tipsBtn">🔊 How to take a good photo</button>
     <button type="button" id="sampleBtn">🖼 Sample photo</button>
 
@@ -619,10 +621,47 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   })();
   const scripts = {};
   const loadScript = (src) => scripts[src] || (scripts[src] = new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => { delete scripts[src]; rej(new Error("network")); }; document.head.append(s); }));
-  async function ocrText(canvas) {
-    await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js");
-    const { data } = await Tesseract.recognize(canvas, "eng");
-    return (data.text || "").replace(/\s+/g, " ").trim();
+  // One Tesseract worker for the whole app (loading it is the slow part)
+  let tessWorker = null, tessLoading = null;
+  function getWorker() {
+    if (tessWorker) return Promise.resolve(tessWorker);
+    if (!tessLoading) tessLoading = (async () => {
+      await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js");
+      tessWorker = await Tesseract.createWorker("eng");
+      return tessWorker;
+    })().catch(e => { tessLoading = null; throw e; });
+    return tessLoading;
+  }
+  // Grey-scale, stretch contrast and resize so text on screens, signs and paper reads better
+  function prepForOcr(src) {
+    const target = Math.max(1000, Math.min(1600, src.width));
+    const sc = target / src.width, c = document.createElement("canvas");
+    c.width = Math.round(src.width * sc); c.height = Math.round(src.height * sc);
+    const g = c.getContext("2d"); g.drawImage(src, 0, 0, c.width, c.height);
+    try {
+      const im = g.getImageData(0, 0, c.width, c.height), d = im.data;
+      let lo = 255, hi = 0;
+      for (let i = 0; i < d.length; i += 16) { const v = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; if (v < lo) lo = v; if (v > hi) hi = v; }
+      const span = Math.max(1, hi - lo);
+      for (let i = 0; i < d.length; i += 4) { const v = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2] - lo) * 255 / span; d[i] = d[i + 1] = d[i + 2] = v; }
+      g.putImageData(im, 0, 0);
+    } catch (_) {}
+    return c;
+  }
+  async function ocrLines(canvas) {
+    const w = await getWorker();
+    const { data } = await w.recognize(prepForOcr(canvas));
+    return String(data.text || "").split(/\n+/).map(l => l.replace(/\s+/g, " ").trim())
+      .filter(l => l.length > 1 && (l.match(/[A-Za-z0-9£€$%]/g) || []).length / l.length > 0.6);
+  }
+  async function ocrText(canvas) { return (await ocrLines(canvas)).join(" "); }
+  // Long text is spoken in short pieces, so phones don't cut it off
+  function sayLong(text) {
+    if (settings.voice !== "app" || !window.speechSynthesis) { say(text); return; }
+    lastSaid = text;
+    const parts = String(text).match(/[^.!?\n]{1,180}[.!?\n]?/g) || [text];
+    speechSynthesis.cancel();
+    setTimeout(() => parts.forEach(pc => { const u = new SpeechSynthesisUtterance(pc.trim()); u.lang = "en-GB"; if (voice) u.voice = voice; speechSynthesis.speak(u); }), 200);
   }
   const toBlob = (c) => new Promise(r => c.toBlob(r, "image/jpeg", 0.88));
 
@@ -678,8 +717,9 @@ Reply with ONLY JSON:
 {"readable": true|false, "kind": "menu|promotion|leaflet|sign|label|document|other", "summary": "string", "items": [{"name": "string", "price": "£0.00 or null", "detail": "short extra info or null"}], "full_text": "all the text in reading order, as plain text", "seen": "what the image shows if unreadable, else null", "guidance": "instruction or null"}`;
       return await sample.json(prompt, { images: await toBlob(canvas), modelTier: "default", cache: false });
     }
-    const text = await ocrText(canvas);
+    const lines = await ocrLines(canvas), text = lines.join("\n");
     if (text.replace(/[^A-Za-z]/g, "").length < 4) return { readable: false, seen: "no printed words", guidance: "Hold the phone about 30 centimetres from the text, straight in front of it, and keep still." };
+    return { readable: true, kind: "other", summary: `I can read ${lines.length} line${lines.length > 1 ? "s" : ""} of text.`, items: [], full_text: text };
     const items = (text.match(/[A-Za-z][^£\n]{2,40}£\s?\d+(?:\.\d{2})?/g) || []).slice(0, 12).map(s => { const m = s.match(/^(.*?)£\s?(\d+(?:\.\d{2})?)$/); return { name: m ? m[1].trim() : s, price: m ? "£" + m[2] : null, detail: null }; });
     return { readable: true, kind: "other", summary: items.length ? `I found ${items.length} prices.` : "Here is the text I could read.", items, full_text: text };
   }
@@ -705,7 +745,8 @@ Reply with ONLY JSON:
       : String(r.full_text || "");
     const row = document.createElement("div"); row.className = "row2";
     const all = document.createElement("button"); all.type = "button"; all.className = "primary"; all.textContent = "🔊 Read everything";
-    all.onclick = () => setTimeout(() => say(readingText || "There's nothing more to read."), 400);
+    all.textContent = "🔊 Read it again";
+    all.onclick = () => setTimeout(() => sayLong(readingText || "There's nothing more to read."), 400);
     const stop = document.createElement("button"); stop.type = "button"; stop.textContent = "■ Stop reading";
     stop.onclick = () => { if (window.speechSynthesis) setTimeout(() => speechSynthesis.cancel(), 400); };
     row.append(all, stop); card.append(row);
@@ -715,7 +756,9 @@ Reply with ONLY JSON:
     }
     box.append(card);
     const n = items.length;
-    status("ok", `${r.summary || ""} ${n ? `I found ${n} ${r.kind === "menu" ? "dishes" : "items"}. Tap Read everything to hear them all.` : "Tap Read everything to hear all the text."}`);
+    status("ok", r.summary || "Here's the text.", { speak: false });
+    // Read it out straight away: the summary, then the content
+    sayLong(`${r.summary || ""} ${readingText}`.trim());
   }
   const ok = (x) => x && x !== "null";
 
@@ -865,7 +908,8 @@ Reply with ONLY JSON:
   const GROCERY = "milk eggs egg bread butter cheese yogurt yoghurt cream tomatoes tomato pasta penne spaghetti rice beans coffee tea sugar flour cereal oats porridge juice water cola lemonade chocolate biscuits crisps soup tuna chicken beef ham bacon sausages fish salmon apples apple bananas banana oranges orange grapes lemons lemon limes strawberries blueberries peelers satsumas clementines carrots carrot potatoes potato onions onion broccoli cucumber lettuce salad peppers pepper mushrooms garlic avocado spinach cabbage courgette oil vinegar ketchup mayonnaise honey jam peanut noodles pizza cravendale semi skimmed whole".split(" ");
   const GROCERY_SET = new Set(GROCERY);
   const PRETTY = { semi: "semi-skimmed milk", skimmed: "skimmed milk", whole: "whole milk", cravendale: "Cravendale milk", peelers: "easy peelers", egg: "eggs", penne: "penne pasta" };
-  const COCO_NAMES = { banana: "bananas", apple: "apples", orange: "oranges", broccoli: "broccoli", carrot: "carrots", bottle: "a bottle", sandwich: "a sandwich", pizza: "pizza", cake: "cake", donut: "doughnuts" };
+  // Every object the on-phone model knows (COCO, 80 kinds), in plain spoken English
+  const COCO_NAMES = { person: "a person", bicycle: "a bicycle", car: "a car", motorcycle: "a motorbike", bus: "a bus", truck: "a lorry", "traffic light": "a traffic light", "stop sign": "a stop sign", bench: "a bench", bird: "a bird", cat: "a cat", dog: "a dog", backpack: "a backpack", umbrella: "an umbrella", handbag: "a handbag", suitcase: "a suitcase", "sports ball": "a ball", bottle: "a bottle", "wine glass": "a glass", cup: "a cup", fork: "a fork", knife: "a knife", spoon: "a spoon", bowl: "a bowl", banana: "bananas", apple: "apples", sandwich: "a sandwich", orange: "oranges", broccoli: "broccoli", carrot: "carrots", "hot dog": "a hot dog", pizza: "pizza", donut: "doughnuts", cake: "cake", chair: "a chair", couch: "a sofa", "potted plant": "a plant", bed: "a bed", "dining table": "a table", toilet: "a toilet", tv: "a screen", laptop: "a laptop", mouse: "a computer mouse", remote: "a remote control", keyboard: "a keyboard", "cell phone": "a phone", microwave: "a microwave", oven: "an oven", toaster: "a toaster", sink: "a sink", refrigerator: "a fridge", book: "a book", clock: "a clock", vase: "a vase", scissors: "scissors", "teddy bear": "a teddy bear", "hair drier": "a hair dryer", toothbrush: "a toothbrush", tie: "a tie", kite: "a kite", skateboard: "a skateboard", "tennis racket": "a tennis racket", horse: "a horse", sheep: "a sheep", cow: "a cow", boat: "a boat", train: "a train", airplane: "a plane", "fire hydrant": "a fire hydrant", "parking meter": "a parking meter", frisbee: "a frisbee", skis: "skis", snowboard: "a snowboard", "baseball bat": "a bat", "baseball glove": "a glove", surfboard: "a surfboard", elephant: "an elephant", bear: "a bear", zebra: "a zebra", giraffe: "a giraffe" };
   const stem = (w) => norm(w).replace(/(es|s)$/, "");
   const onList = (name) => pending().find(i => { const a = stem(i.name), b = stem(name); return a && b && (a.includes(b) || b.includes(a)); });
   let walking = false, walkTimer = null, walkBusy = false, walkTick = 0, lastHeard = {}, detector = null, ocrWorker = null;
@@ -877,11 +921,27 @@ Reply with ONLY JSON:
       detector = await cocoSsd.load({ base: "lite_mobilenet_v2" });
     })().catch(() => { detector = null; }));
     if (!ocrWorker) jobs.push((async () => {
-      await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js");
-      ocrWorker = await Tesseract.createWorker("eng");
+      ocrWorker = await getWorker();
     })().catch(() => { ocrWorker = null; }));
     await Promise.all(jobs);
     return !!(detector || ocrWorker);
+  }
+  // Draw what the AI sees on top of the live camera, with labels
+  function drawBoxes(preds) {
+    const cv = $("boxes"); if (!cv) return;
+    const r = cv.getBoundingClientRect(); cv.width = r.width * devicePixelRatio; cv.height = r.height * devicePixelRatio;
+    const g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height);
+    if (!preds.length || !video.videoWidth) return;
+    const W = video.videoWidth, H = video.videoHeight, s = Math.max(cv.width / W, cv.height / H), ox = (cv.width - W * s) / 2, oy = (cv.height - H * s) / 2;
+    g.lineWidth = 4 * devicePixelRatio; g.font = `700 ${15 * devicePixelRatio}px system-ui, sans-serif`; g.textBaseline = "top";
+    preds.forEach(p => {
+      const [x, y, w, h] = p.bbox, X = ox + x * s, Y = oy + y * s;
+      g.strokeStyle = "#56b4e9"; g.strokeRect(X, Y, w * s, h * s);
+      const label = (COCO_NAMES[p.class] || p.class).replace(/^an? /, "");
+      const tw = g.measureText(label).width + 12 * devicePixelRatio;
+      g.fillStyle = "#56b4e9"; g.fillRect(X, Math.max(0, Y - 22 * devicePixelRatio), tw, 22 * devicePixelRatio);
+      g.fillStyle = "#0b1422"; g.fillText(label, X + 6 * devicePixelRatio, Math.max(0, Y - 22 * devicePixelRatio) + 3 * devicePixelRatio);
+    });
   }
   const side = (x) => x < 0.36 ? "on your left" : x > 0.64 ? "on your right" : "ahead";
   function walkFrame() {
@@ -897,8 +957,9 @@ Reply with ONLY JSON:
     try {
       const found = [];
       if (detector) {
-        const preds = await detector.detect(video, 6, 0.55);
-        preds.forEach(p => { const n = COCO_NAMES[p.class]; if (n) found.push({ name: n, x: (p.bbox[0] + p.bbox[2] / 2) / video.videoWidth }); });
+        const preds = await detector.detect(video, 8, 0.5);
+        drawBoxes(preds);
+        preds.forEach(p => { const n = COCO_NAMES[p.class] || "a " + p.class; found.push({ name: n, x: (p.bbox[0] + p.bbox[2] / 2) / video.videoWidth, near: (p.bbox[2] * p.bbox[3]) / (video.videoWidth * video.videoHeight) > 0.35 }); });
       }
       if (ocrWorker && walkTick++ % 2 === 0) {
         const c = walkFrame();
@@ -916,14 +977,16 @@ Reply with ONLY JSON:
     if (!walking || !found.length) return;
     const now = Date.now(), seenNow = {};
     found.forEach(f => { if (!seenNow[f.name]) seenNow[f.name] = f; });
-    const fresh = Object.values(seenNow).filter(f => !lastHeard[f.name] || now - lastHeard[f.name] > 10000);
+    const fresh = Object.values(seenNow).filter(f => !lastHeard[f.name] || now - lastHeard[f.name] > 8000);
     if (!fresh.length) return;
     const listed = fresh.filter(f => onList(f.name)), others = fresh.filter(f => !onList(f.name));
     const talking = window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending);
     if (!listed.length && talking) return; // don't pile up chatter
     fresh.forEach(f => { lastHeard[f.name] = now; });
     const parts = listed.map(f => `${cap(f.name)}, ${side(f.x)}. That's on your list!`);
-    if (others.length) parts.push("Passing " + others.slice(0, 3).map(f => f.name).join(", ") + ".");
+    const close = others.filter(f => f.near), rest = others.filter(f => !f.near).slice(0, 3);
+    close.forEach(f => parts.push(`${cap(f.name)} very close, ${side(f.x)}.`));
+    if (rest.length) parts.push((rest.length === 1 ? `${cap(rest[0].name)} ${side(rest[0].x)}` : "I can see " + rest.map(f => `${f.name} ${side(f.x)}`).join(", ")) + ".");
     const msg = parts.join(" ");
     $("statusIc").textContent = listed.length ? "★" : "🚶";
     $("statusText").textContent = msg;
@@ -945,12 +1008,12 @@ Reply with ONLY JSON:
     const ok = await loadWalkAI();
     if (!walking) return;
     if (!ok) { status("error", "Walk mode couldn't load its AI. Check your internet connection, then try again.", { retry: startWalk }); stopWalk(true); return; }
-    status("ok", "Walk mode on. Walk slowly with the phone upright at chest height, camera facing the shelves. I'll name products as you pass, and tell you when one is on your list.");
+    status("ok", "Walk mode on. Hold the phone upright at chest height and move slowly. I'll tell you what I can see, and when something is on your list.");
     clearInterval(walkTimer); walkTimer = setInterval(walkStep, 900);
   }
   function stopWalk(silent) {
     const was = walking;
-    walking = false; clearInterval(walkTimer); walkTimer = null;
+    walking = false; clearInterval(walkTimer); walkTimer = null; drawBoxes([]);
     $("walkBtn").setAttribute("aria-pressed", "false"); $("walkBtn").textContent = "🚶 Walk mode: tell me what I pass";
     if (stream) { setChip(); if (was) startAim(); }
     if (was && !silent) status("info", "Walk mode off.");
@@ -1136,10 +1199,10 @@ Reply with ONLY JSON:
     const c = canvas || (stream && video.videoWidth ? grab() : null);
     if (!c) { $("photoInput").click(); return; }
     if (mode === "find" && !pending().length) { status("warn", "Your list has nothing left to find. Add items in My list."); return; }
-    const q = isSample ? null : imageQuality(c);
+    const q = isSample || mode === "read" ? null : imageQuality(c);
     if (q) { status("warn", q, { retry: () => runCheck() }); return; }
     setBusy(true);
-    status("busy", mode === "find" ? "Checking the product…" : mode === "read" ? "Reading the text…" : "Reading the price label…");
+    status("busy", mode === "find" ? "Checking the product…" : mode === "read" ? (claudeVision ? "Reading the text…" : "Reading the text. This can take up to 10 seconds the first time…") : "Reading the price label…");
     try {
       if (mode === "find") showMatch(await identify(c));
       else if (mode === "read") showReading(await readText(c));
@@ -1167,7 +1230,7 @@ Reply with ONLY JSON:
       for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
         const i = y * w + x, v = 4 * L[i] - L[i - 1] - L[i + 1] - L[i - w] - L[i + w]; lap += v * v; n++;
       }
-      if (lap / n < 8) return "The photo is blurry. Hold the phone with both hands, rest your elbows against your body, and keep still for two seconds before tapping.";
+      if (lap / n < 4) return "The photo is blurry. Hold the phone with both hands, rest your elbows against your body, and keep still for two seconds before tapping.";
     } catch (_) {}
     return null;
   }
