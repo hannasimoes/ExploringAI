@@ -402,6 +402,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const el = e.target.closest("button, label.btn");
     if (!el || el.disabled) return;
     if (el.matches("label.btn") && e.target.tagName === "INPUT") return;
+    if (el.id === "micBtn") return;
     say(controlName(el), { echo: true });
   }, true);
   document.addEventListener("focusin", (e) => {
@@ -470,6 +471,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
   const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
   const pending = () => items.filter(i => !i.done);
+  const items_add = (name) => { const n = String(name).trim().toLowerCase(); if (n) items.push({ name: n, done: false }); };
   function saveItems() { keep("items", items); renderList(); renderHome(); }
   function addItems(text) {
     const parts = String(text).split(/,|\band\b/i).map(t => t.trim().toLowerCase()).filter(Boolean);
@@ -516,16 +518,72 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
 
   // Dictation where the browser supports it; otherwise point to keyboard mic (M03 fallback)
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  // iPhone fix: speech output and the microphone can't share audio, so the app stays quiet while listening,
+  // keeps every partial result, and adds what it heard when listening stops.
+  let rec = null, heard = "", recTimer = null;
+  const MIC_IDLE = "🎤 Dictate items";
+  const COMPOUNDS = new Set(["orange juice", "apple juice", "whole milk", "semi skimmed", "skimmed milk", "peanut butter", "olive oil", "chopped tomatoes", "baked beans", "cream cheese", "chicken soup", "tomato soup", "orange oranges"]);
+  function splitSpoken(text) {
+    const chunks = String(text).toLowerCase().split(/,|\band\b|\bthen\b|\balso\b|\.|\n/).map(s => s.trim()).filter(Boolean);
+    const out = [];
+    chunks.forEach(c => {
+      const words = c.split(/\s+/);
+      // "milk eggs bread" said without pauses: split when every word is a known grocery word
+      if (words.length > 1 && words.every(w => GROCERY_SET.has(w.replace(/[^a-z]/g, "")))) {
+        for (let i = 0; i < words.length; i++) {
+          const pair = words[i] + " " + (words[i + 1] || "");
+          if (COMPOUNDS.has(pair)) { out.push(pair); i++; } else out.push(words[i]);
+        }
+      } else out.push(c);
+    });
+    return out;
+  }
+  function finishDictation() {
+    clearTimeout(recTimer); recTimer = null;
+    const r = rec; rec = null;
+    $("micBtn").textContent = MIC_IDLE; $("micBtn").setAttribute("aria-pressed", "false");
+    if (r) { try { r.stop(); } catch (_) {} }
+  }
   $("micBtn").onclick = () => {
+    if (rec) { finishDictation(); return; }
     if (!SR) { $("micNote").textContent = "Dictation isn't available here. Tap the text box and use the microphone key on your keyboard."; say($("micNote").textContent); $("itemInput").focus(); return; }
-    let rec; try { rec = new SR(); } catch (_) { rec = null; }
+    try { rec = new SR(); } catch (_) { rec = null; }
     if (!rec) { $("micNote").textContent = "Dictation isn't available here. Use the keyboard microphone instead."; say($("micNote").textContent); return; }
-    rec.lang = "en-GB"; rec.interimResults = false;
-    $("micBtn").textContent = "🎤 Listening… say items with commas"; say("Listening.");
-    rec.onresult = (e) => addItems(e.results[0][0].transcript);
-    rec.onerror = () => { $("micNote").textContent = "I couldn't hear that. Try again, or type your items."; say($("micNote").textContent); };
-    rec.onend = () => { $("micBtn").textContent = "🎤 Dictate items"; };
-    try { rec.start(); } catch (_) { rec.onerror(); }
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    heard = "";
+    const r = rec;
+    r.lang = "en-GB"; r.interimResults = true; r.continuous = true;
+    r.onresult = (e) => {
+      let txt = "";
+      for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript + " ";
+      heard = txt.replace(/\s+/g, " ").trim();
+      $("itemInput").value = heard;
+      clearTimeout(recTimer); recTimer = setTimeout(finishDictation, 2500); // stop after 2.5 s of silence
+    };
+    r.onerror = (e) => {
+      const code = e && e.error;
+      $("micNote").textContent = code === "not-allowed" || code === "service-not-allowed"
+        ? "Microphone access is off. Allow the microphone for this site in your phone settings, or type your items."
+        : code === "no-speech" ? "I didn't hear anything. Tap Dictate items and speak straight away." : "Dictation stopped. Try again, or type your items.";
+    };
+    r.onend = () => {
+      if (rec === r) finishDictation();
+      const said = splitSpoken(heard); heard = "";
+      $("itemInput").value = "";
+      if (said.length) {
+        said.forEach(p => items_add(p));
+        saveItems();
+        $("micNote").textContent = "Added: " + said.join(", ") + ".";
+        setTimeout(() => say(`Added ${said.join(", ")}. ${pending().length} items to get.`), 300);
+      } else if ($("micNote").textContent.indexOf("Dictation") !== 0 && $("micNote").textContent.indexOf("Microphone") !== 0 && $("micNote").textContent.indexOf("I didn't") !== 0) {
+        $("micNote").textContent = "I didn't catch any items. Try again, or type them.";
+        setTimeout(() => say($("micNote").textContent), 300);
+      } else setTimeout(() => say($("micNote").textContent), 300);
+    };
+    $("micBtn").textContent = "■ Listening… tap to finish"; $("micBtn").setAttribute("aria-pressed", "true");
+    $("micNote").textContent = "Say your items, for example: milk, eggs and bread. I'll add them when you pause.";
+    recTimer = setTimeout(finishDictation, 12000);
+    try { r.start(); } catch (_) { finishDictation(); $("micNote").textContent = "Dictation couldn't start. Try again, or type your items."; }
   };
 
   // ---------- AI service (M05) ----------
