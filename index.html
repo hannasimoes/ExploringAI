@@ -815,7 +815,8 @@ Reply with ONLY JSON:
     await video.play().catch(() => {});
     setChip(); $("camBtn").textContent = "■ Stop camera";
     $("aimBtn").hidden = false;
-    if (viaGlasses) status("ok", "Glasses connected. Look towards the shelf and I'll tell you which way to turn your head.");
+    if (afterCamera) status("ok", viaGlasses ? "Glasses connected." : "Camera on.", { speak: false });
+    else if (viaGlasses) status("ok", "Glasses connected. Look towards the shelf and I'll tell you which way to turn your head.");
     else status("ok", "Camera on. The camera is on the back of the phone, at the top. " + (mode === "find" ? "Hold the product about 30 centimetres in front of it. I'll tell you which way to move." : mode === "read" ? "Point it at the menu or sign, about 30 centimetres away. I'll tell you which way to move." : "Point it at the price label, about 20 centimetres away. I'll tell you which way to move."));
     startAim();
     return true;
@@ -838,12 +839,16 @@ Reply with ONLY JSON:
     if (!silent) status("info", "Camera off.");
   }
   // Ask which camera to use: phone, or Meta smart glasses (concept preview: the phone camera stands in for the glasses feed)
-  $("camBtn").onclick = () => {
-    if (stream) { stopCamera(false); return; }
-    const box = $("camChoice"); box.hidden = false;
+  let afterCamera = null; // what to start once the camera is chosen (e.g. walk mode)
+  function askCamera(then) {
+    afterCamera = then || null;
+    $("camChoice").hidden = false;
     status("info", "Do you want me to turn on the phone camera, or connect your Meta glasses?");
-  };
-  $("usePhone").onclick = () => { $("camChoice").hidden = true; viaGlasses = false; startCamera(); };
+    $("usePhone").focus({ preventScroll: true });
+  }
+  $("camBtn").onclick = () => { if (stream) { stopCamera(false); return; } askCamera(null); };
+  async function cameraChosen() { const ok = await startCamera(); const next = afterCamera; afterCamera = null; if (ok && next) next(); }
+  $("usePhone").onclick = () => { $("camChoice").hidden = true; viaGlasses = false; cameraChosen(); };
   $("useGlasses").onclick = async () => {
     $("camChoice").hidden = true;
     status("busy", "Looking for your Meta glasses. Make sure they're switched on and near your phone.");
@@ -851,7 +856,7 @@ Reply with ONLY JSON:
     status("busy", "Found Ray-Ban Meta glasses. Connecting…");
     await new Promise(r => setTimeout(r, 1800));
     viaGlasses = true;
-    await startCamera();
+    await cameraChosen();
   };
 
   // ---------- Aim guide: while the live camera is on, say which way to move ----------
@@ -1017,6 +1022,18 @@ Reply with ONLY JSON:
     c.getContext("2d").drawImage(video, (vw - cw) / 2, (vh - chh) / 2, cw, chh, 0, 0, c.width, c.height);
     return c;
   }
+  // Objects the small model often imagines need a much higher score before we mention them
+  const HIGH_BAR = new Set(["toilet", "bed", "oven", "sink", "refrigerator", "tv", "couch", "toaster", "microwave", "hair drier", "teddy bear", "bottle", "vase", "cell phone", "remote", "mouse", "scissors", "toothbrush", "tie", "kite", "umbrella", "suitcase", "handbag", "backpack", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "airplane", "train", "boat", "bus", "truck", "motorcycle", "fire hydrant", "parking meter", "stop sign", "frisbee", "skis", "snowboard", "sports ball", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "hot dog", "pizza", "donut", "cake", "sandwich", "wine glass", "knife", "fork", "spoon"]);
+  const minScore = (cls) => HIGH_BAR.has(cls) ? 0.75 : 0.6;
+  const SCENE_OK = new Set(Object.values(SCENE_FIX));
+  // Only mention something once it has been seen in two checks in a row
+  const seenStreak = { det: {}, cls: {} }, lastSeen = { det: [], cls: [] };
+  function confirmed(items, kind) {
+    const h = seenStreak[kind], now = new Set(items.map(i => i.name));
+    Object.keys(h).forEach(k => { if (!now.has(k)) delete h[k]; });
+    items.forEach(i => { h[i.name] = (h[i.name] || 0) + 1; });
+    return items.filter(i => h[i.name] >= 2);
+  }
   // One model per step, then a pause, so taps (like Stop) always get through
   async function walkStep() {
     if (!walking || !video.videoWidth) return;
@@ -1025,14 +1042,18 @@ Reply with ONLY JSON:
     const { c, k } = smallFrame();
     try {
       if (detector && (tick % 2 === 0 || !classifier)) {
-        const preds = (await detector.detect(c, 8, 0.4)).map(p => ({ ...p, bbox: p.bbox.map(v => v * k) }));
+        const preds = (await detector.detect(c, 8, 0.5)).filter(p => p.score >= minScore(p.class)).map(p => ({ ...p, bbox: p.bbox.map(v => v * k) }));
         if (!walking) return;
-        drawBoxes(preds);
-        preds.forEach(p => { const n = COCO_NAMES[p.class] || "a " + p.class; found.push({ name: n, x: (p.bbox[0] + p.bbox[2] / 2) / video.videoWidth, near: (p.bbox[2] * p.bbox[3]) / (video.videoWidth * video.videoHeight) > 0.35 }); });
+        const raw = preds.map(p => ({ name: COCO_NAMES[p.class] || "a " + p.class, cls: p.class, x: (p.bbox[0] + p.bbox[2] / 2) / video.videoWidth, near: (p.bbox[2] * p.bbox[3]) / (video.videoWidth * video.videoHeight) > 0.35 }));
+        const ok = confirmed(raw, "det"), okCls = new Set(ok.map(o => o.cls));
+        drawBoxes(preds.filter(p => okCls.has(p.class)));
+        found.push(...ok); lastSeen.det = ok.map(o => o.name);
       } else if (classifier) {
         const top = await classifier.classify(c, 3);
         if (!walking) return;
-        top.filter(x => x.probability > 0.2).forEach(x => found.push({ name: sceneName(x.className), x: 0.5, scene: true }));
+        const raw = top.map(x => ({ name: sceneName(x.className), x: 0.5, scene: true, p: x.probability }))
+          .filter(x => (SCENE_OK.has(x.name) && x.p > 0.35) || x.p > 0.7);
+        const okc = confirmed(raw, "cls"); found.push(...okc); lastSeen.cls = okc.map(o => o.name);
       }
     } catch (_) {}
     announceWalk(found);
@@ -1048,7 +1069,7 @@ Reply with ONLY JSON:
   function announceWalk(found) {
     if (!walking) return;
     // Always show everything the AI sees right now, even when it isn't spoken
-    const seeing = [...new Set(found.map(f => f.name.replace(/^an? /, "")))];
+    const seeing = [...new Set([...lastSeen.det, ...lastSeen.cls].map(n => n.replace(/^an? /, "")))];
     $("seeing").hidden = false;
     $("seeing").textContent = seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet";
     if (!found.length) return;
@@ -1080,7 +1101,7 @@ Reply with ONLY JSON:
     }, listed.length && talking ? 150 : 0);
   }
   async function startWalk() {
-    if (!stream) { const ok = await startCamera(); if (!ok) return; }
+    if (!stream) { askCamera(startWalk); return; }
     walking = true; lastHeard = {}; stopAim();
     $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
     status("busy", "Starting walk mode. Loading the object finder, this takes a few seconds the first time.");
@@ -1094,7 +1115,7 @@ Reply with ONLY JSON:
   }
   function stopWalk(silent) {
     const was = walking;
-    walking = false; drawBoxes([]); $("seeing").hidden = true;
+    walking = false; drawBoxes([]); $("seeing").hidden = true; seenStreak.det = {}; seenStreak.cls = {}; lastSeen.det = []; lastSeen.cls = [];
     $("walkBtn").setAttribute("aria-pressed", "false"); $("walkBtn").textContent = "🚶 Walk mode: tell me what I pass";
     if (stream) { setChip(); if (was) startAim(); }
     if (was && !silent) status("info", "Walk mode off.");
