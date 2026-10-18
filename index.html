@@ -117,6 +117,7 @@ ul.items button { width: 48px; min-height: 48px; height: 48px; padding: 0; borde
 .camera { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--cam); aspect-ratio: 4 / 5; max-width: 100%; }
 .camera video, .camera img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .camera .hint { position: absolute; inset: 0; display: grid; place-items: center; padding: 28px; text-align: center; color: #d9e6dc; }
+.seeing { margin: 0; padding: 10px 14px; border-radius: 12px; background: var(--soft); font-weight: 700; }
 #boxes { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .frame { position: absolute; inset: 14%; border: 3px dashed rgba(86, 180, 233, .85); border-radius: 18px; pointer-events: none; }
 .chip { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); background: var(--surface); color: var(--ink); font-weight: 700; font-size: .85rem; padding: 4px 12px; border-radius: 999px; white-space: nowrap; }
@@ -265,6 +266,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <span class="chip" id="camChip" aria-hidden="true">Camera off</span>
       <div class="hint" id="camHint">Hold the product about 30 cm from the phone, roughly the length of your forearm.</div>
     </div>
+    <p id="seeing" class="seeing" aria-hidden="true" hidden></p>
     <p class="muted" id="frameTip">Hold one product in your hand about 30 cm from the phone, or point at the price label on the front edge of the shelf. Keep still, then tap.</p>
     <button type="button" class="primary" id="checkBtn">📷 Check product</button>
     <div class="row2">
@@ -541,21 +543,27 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   // keeps every partial result, and adds what it heard when listening stops.
   let rec = null, heard = "", recTimer = null;
   const MIC_IDLE = "🎤 Dictate items";
-  const COMPOUNDS = new Set(["orange juice", "apple juice", "whole milk", "semi skimmed", "skimmed milk", "peanut butter", "olive oil", "chopped tomatoes", "baked beans", "cream cheese", "chicken soup", "tomato soup", "orange oranges"]);
+  const COMPOUNDS = new Set(["milk chocolate", "chocolate milk", "tomato soup", "tomato sauce", "tomato ketchup", "chicken breast", "chicken breasts", "chicken nuggets", "beef mince", "cream cheese", "garlic bread", "lemon juice", "lime juice", "apple pie", "orange squash", "fruit juice", "corn flakes", "vanilla ice", "strawberry jam", "raspberry jam", "mango chutney", "onion rings", "pork sausages", "orange juice", "apple juice", "whole milk", "semi skimmed", "skimmed milk", "peanut butter", "olive oil", "chopped tomatoes", "baked beans", "cream cheese", "chicken soup", "tomato soup", "orange oranges"]);
+  // Words that describe the next word ("orange juice", "free range eggs", "two apples") stay attached to it;
+  // everything else said without pauses becomes a separate item.
+  const MODIFIERS = new Set("whole semi skimmed peanut olive baked chopped brown white red green yellow free range greek sparkling still toilet washing ice sweet frozen fresh ground instant basmati cherry natural diet kitchen soy oat almond coconut plain cheddar mozzarella dark hot cold sliced grated smoked salted unsalted low fat full organic large small big mini baby spring wholemeal sourdough pitta tortilla maple golden caster icing self raising plain dish fabric hand body paper cling tin aluminium bin veggie vegetable".split(" "));
+  const NUMBERS = new Set("a an one two three four five six seven eight nine ten dozen half some few pack packs bottle bottles bag bags box boxes tin tins can cans jar jars loaf loaves carton cartons kilo kilos litre litres of".split(" "));
+  const FILLER = new Set("i need want to buy get please and also then the some more like um uh er".split(" "));
   function splitSpoken(text) {
-    const chunks = String(text).toLowerCase().split(/,|\band\b|\bthen\b|\balso\b|\.|\n/).map(s => s.trim()).filter(Boolean);
+    const chunks = String(text).toLowerCase().split(/,|;|\.|\n|\band\b|\bthen\b|\balso\b|\bplus\b/).map(s => s.trim()).filter(Boolean);
     const out = [];
     chunks.forEach(c => {
-      const words = c.split(/\s+/);
-      // "milk eggs bread" said without pauses: split when every word is a known grocery word
-      if (words.length > 1 && words.every(w => GROCERY_SET.has(w.replace(/[^a-z]/g, "")))) {
-        for (let i = 0; i < words.length; i++) {
-          const pair = words[i] + " " + (words[i + 1] || "");
-          if (COMPOUNDS.has(pair)) { out.push(pair); i++; } else out.push(words[i]);
-        }
-      } else out.push(c);
+      const words = c.replace(/[^a-z0-9' -]/g, " ").split(/\s+/).filter(w => w && !FILLER.has(w));
+      let cur = [];
+      words.forEach((w, i) => {
+        cur.push(w);
+        const next = words[i + 1];
+        const attach = next && (MODIFIERS.has(w) || NUMBERS.has(w) || /^\d+$/.test(w) || COMPOUNDS.has(w + " " + next));
+        if (!attach) { out.push(cur.filter(x => !["a", "an", "of", "some"].includes(x)).join(" ")); cur = []; }
+      });
+      if (cur.length) out.push(cur.join(" "));
     });
-    return out;
+    return out.map(s => s.trim()).filter(Boolean);
   }
   function finishDictation() {
     clearTimeout(recTimer); recTimer = null;
@@ -928,19 +936,32 @@ Reply with ONLY JSON:
   const COCO_NAMES = { person: "a person", bicycle: "a bicycle", car: "a car", motorcycle: "a motorbike", bus: "a bus", truck: "a lorry", "traffic light": "a traffic light", "stop sign": "a stop sign", bench: "a bench", bird: "a bird", cat: "a cat", dog: "a dog", backpack: "a backpack", umbrella: "an umbrella", handbag: "a handbag", suitcase: "a suitcase", "sports ball": "a ball", bottle: "a bottle", "wine glass": "a glass", cup: "a cup", fork: "a fork", knife: "a knife", spoon: "a spoon", bowl: "a bowl", banana: "bananas", apple: "apples", sandwich: "a sandwich", orange: "oranges", broccoli: "broccoli", carrot: "carrots", "hot dog": "a hot dog", pizza: "pizza", donut: "doughnuts", cake: "cake", chair: "a chair", couch: "a sofa", "potted plant": "a plant", bed: "a bed", "dining table": "a table", toilet: "a toilet", tv: "a screen", laptop: "a laptop", mouse: "a computer mouse", remote: "a remote control", keyboard: "a keyboard", "cell phone": "a phone", microwave: "a microwave", oven: "an oven", toaster: "a toaster", sink: "a sink", refrigerator: "a fridge", book: "a book", clock: "a clock", vase: "a vase", scissors: "scissors", "teddy bear": "a teddy bear", "hair drier": "a hair dryer", toothbrush: "a toothbrush", tie: "a tie", kite: "a kite", skateboard: "a skateboard", "tennis racket": "a tennis racket", horse: "a horse", sheep: "a sheep", cow: "a cow", boat: "a boat", train: "a train", airplane: "a plane", "fire hydrant": "a fire hydrant", "parking meter": "a parking meter", frisbee: "a frisbee", skis: "skis", snowboard: "a snowboard", "baseball bat": "a bat", "baseball glove": "a glove", surfboard: "a surfboard", elephant: "an elephant", bear: "a bear", zebra: "a zebra", giraffe: "a giraffe" };
   const stem = (w) => norm(w).replace(/(es|s)$/, "");
   const onList = (name) => pending().find(i => { const a = stem(i.name), b = stem(name); return a && b && (a.includes(b) || b.includes(a)); });
+  let classifier = null;
+  // Friendlier names for the 1,000 ImageNet categories the scene model knows (first name only, plus fixes)
+  const SCENE_FIX = { "notebook": "laptop", "notebook computer": "laptop", "desktop computer": "computer", "monitor": "screen", "screen": "screen", "television": "TV", "cellular telephone": "phone", "iPod": "phone", "hand-held computer": "phone", "water bottle": "water bottle", "pop bottle": "drink bottle", "wine bottle": "wine bottle", "beer bottle": "bottle", "grocery store": "supermarket shelves", "shopping cart": "shopping trolley", "shopping basket": "shopping basket", "refrigerator": "fridge", "studio couch": "sofa", "dining table": "table", "desk": "desk", "folding chair": "chair", "rocking chair": "chair", "barber chair": "chair", "throne": "chair", "sliding door": "door", "window shade": "blind", "window screen": "window", "four-poster": "bed", "quilt": "bed", "carton": "carton", "packet": "packet", "plastic bag": "plastic bag", "toilet tissue": "toilet roll", "paper towel": "paper towels", "Granny Smith": "apple", "pomegranate": "fruit", "lemon": "lemon", "orange": "oranges", "banana": "bananas", "bell pepper": "pepper", "head cabbage": "cabbage", "cucumber": "cucumber", "mushroom": "mushrooms", "corn": "corn", "French loaf": "bread", "bagel": "bagel", "pretzel": "pretzel", "pizza": "pizza", "espresso": "coffee", "coffee mug": "mug", "cup": "cup", "plate": "plate", "measuring cup": "jug", "pill bottle": "pill bottle", "lotion": "bottle of lotion", "soap dispenser": "soap", "hair spray": "spray can", "perfume": "perfume", "sunscreen": "sun cream", "price tag": "price tag", "crate": "crate", "bookcase": "shelves", "wardrobe": "wardrobe", "chiffonier": "chest of drawers", "file": "filing cabinet", "entertainment center": "TV unit", "home theater": "TV", "web site": "screen with a web page", "menu": "menu", "envelope": "envelope", "book jacket": "book", "comic book": "book", "binder": "folder", "street sign": "sign", "traffic light": "traffic light", "car mirror": "mirror", "lab coat": "white coat", "jersey": "T-shirt", "sweatshirt": "jumper", "cardigan": "cardigan", "jean": "jeans", "running shoe": "trainers", "sandal": "sandals", "backpack": "backpack", "purse": "handbag", "wallet": "wallet", "umbrella": "umbrella", "lampshade": "lamp", "table lamp": "lamp", "spotlight": "light", "radiator": "radiator", "plant": "plant", "pot": "plant pot", "vase": "vase", "trolleybus": "bus", "minivan": "car", "sports car": "car", "cab": "taxi", "moving van": "van", "golden retriever": "dog", "Labrador retriever": "dog", "tabby": "cat", "Egyptian cat": "cat", "tiger cat": "cat" };
+  function sceneName(label) {
+    const first = String(label).split(",")[0].trim();
+    for (const part of String(label).split(",").map(s => s.trim())) if (SCENE_FIX[part]) return SCENE_FIX[part];
+    return first;
+  }
   let walking = false, walkTimer = null, walkBusy = false, walkTick = 0, lastHeard = {}, detector = null, ocrWorker = null;
   async function loadWalkAI() {
     const jobs = [];
     if (!detector) jobs.push((async () => {
       await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js");
       await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js");
-      detector = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+      detector = await cocoSsd.load({ base: "mobilenet_v2" });
     })().catch(() => { detector = null; }));
+    if (!classifier) jobs.push((async () => {
+      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js");
+      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js");
+      classifier = await mobilenet.load({ version: 2, alpha: 1.0 });
+    })().catch(() => { classifier = null; }));
     if (!ocrWorker) jobs.push((async () => {
       ocrWorker = await getWorker();
     })().catch(() => { ocrWorker = null; }));
     await Promise.all(jobs);
-    return !!(detector || ocrWorker);
+    return !!(detector || classifier || ocrWorker);
   }
   // Draw what the AI sees on top of the live camera, with labels
   function drawBoxes(preds) {
@@ -972,12 +993,17 @@ Reply with ONLY JSON:
     walkBusy = true;
     try {
       const found = [];
+      const tick = walkTick++;
+      if (classifier && tick % 2 === 0) {
+        const top = await classifier.classify(video, 4);
+        top.filter(c => c.probability > 0.18).forEach(c => found.push({ name: sceneName(c.className), x: 0.5, scene: true }));
+      }
       if (detector) {
-        const preds = await detector.detect(video, 8, 0.5);
+        const preds = await detector.detect(video, 10, 0.4);
         drawBoxes(preds);
         preds.forEach(p => { const n = COCO_NAMES[p.class] || "a " + p.class; found.push({ name: n, x: (p.bbox[0] + p.bbox[2] / 2) / video.videoWidth, near: (p.bbox[2] * p.bbox[3]) / (video.videoWidth * video.videoHeight) > 0.35 }); });
       }
-      if (ocrWorker && walkTick++ % 2 === 0) {
+      if (ocrWorker && tick % 3 === 1) {
         const c = walkFrame();
         const { data } = await ocrWorker.recognize(c);
         (data.words || []).forEach(w => {
@@ -990,7 +1016,12 @@ Reply with ONLY JSON:
     walkBusy = false;
   }
   function announceWalk(found) {
-    if (!walking || !found.length) return;
+    if (!walking) return;
+    // Always show everything the AI sees right now, even when it isn't spoken
+    const seeing = [...new Set(found.map(f => f.name.replace(/^an? /, "")))];
+    $("seeing").hidden = false;
+    $("seeing").textContent = seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet";
+    if (!found.length) return;
     const now = Date.now(), seenNow = {};
     found.forEach(f => { if (!seenNow[f.name]) seenNow[f.name] = f; });
     const fresh = Object.values(seenNow).filter(f => !lastHeard[f.name] || now - lastHeard[f.name] > 8000);
@@ -1000,9 +1031,11 @@ Reply with ONLY JSON:
     if (!listed.length && talking) return; // don't pile up chatter
     fresh.forEach(f => { lastHeard[f.name] = now; });
     const parts = listed.map(f => `${cap(f.name)}, ${side(f.x)}. That's on your list!`);
-    const close = others.filter(f => f.near), rest = others.filter(f => !f.near).slice(0, 3);
+    const close = others.filter(f => f.near && !f.scene), placed = others.filter(f => !f.near && !f.scene).slice(0, 3);
+    const scene = others.filter(f => f.scene && !placed.some(p => p.name.replace(/^an? /, "") === f.name)).slice(0, 2);
     close.forEach(f => parts.push(`${cap(f.name)} very close, ${side(f.x)}.`));
-    if (rest.length) parts.push((rest.length === 1 ? `${cap(rest[0].name)} ${side(rest[0].x)}` : "I can see " + rest.map(f => `${f.name} ${side(f.x)}`).join(", ")) + ".");
+    if (placed.length) parts.push("I can see " + placed.map(f => `${f.name} ${side(f.x)}`).join(", ") + ".");
+    if (scene.length) parts.push("In front of you: " + scene.map(f => f.name).join(" and ") + ".");
     const msg = parts.join(" ");
     $("statusIc").textContent = listed.length ? "★" : "🚶";
     $("statusText").textContent = msg;
@@ -1025,11 +1058,11 @@ Reply with ONLY JSON:
     if (!walking) return;
     if (!ok) { status("error", "Walk mode couldn't load its AI. Check your internet connection, then try again.", { retry: startWalk }); stopWalk(true); return; }
     status("ok", "Walk mode on. Hold the phone upright at chest height and move slowly. I'll tell you what I can see, and when something is on your list.");
-    clearInterval(walkTimer); walkTimer = setInterval(walkStep, 900);
+    clearInterval(walkTimer); walkTimer = setInterval(walkStep, 700);
   }
   function stopWalk(silent) {
     const was = walking;
-    walking = false; clearInterval(walkTimer); walkTimer = null; drawBoxes([]);
+    walking = false; clearInterval(walkTimer); walkTimer = null; drawBoxes([]); $("seeing").hidden = true;
     $("walkBtn").setAttribute("aria-pressed", "false"); $("walkBtn").textContent = "🚶 Walk mode: tell me what I pass";
     if (stream) { setChip(); if (was) startAim(); }
     if (was && !silent) status("info", "Walk mode off.");
