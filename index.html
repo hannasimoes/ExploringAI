@@ -1148,14 +1148,11 @@ Reply with ONLY JSON:
     { label: "Blurry photo", make: () => blurred("semi-milk-2pt.jpg"), check: true },
   ];
   const C = (label, file) => ({ label, make: () => photo(file + "-label.jpg") });
+  // Six listings where the price and pack size are clearly visible, in pairs worth comparing
   const COMPARE_SAMPLES = [
     C("Semi-skimmed milk 4 pints, £1.65", "semi-milk-4pt"), C("Semi-skimmed milk 2 pints, £1.20", "semi-milk-2pt"),
     C("Whole milk 4 pints, £1.65", "whole-milk-4pt"), C("Cravendale milk 2 L, £2.65", "cravendale-2l"),
     C("Bananas, 5 pack, £0.95", "bananas-ocado"), C("Fyffes bananas, 5 pack, £0.78", "bananas-fyffes"),
-    C("Organic bananas, 5 pack, £1.60", "bananas-organic"), C("Carrots 1 kg, £0.69", "carrots"),
-    C("Broccoli 375 g, £0.90", "broccoli"), C("Chopped tomatoes 400 g, £0.47", "chopped-tomatoes"),
-    C("Easy peelers 600 g, £2.60", "easy-peelers"), C("Free range eggs, 12, £3.35", "eggs"),
-    C("Pink Lady apples, 4 pack, £2.75", "pink-lady"), C("Red onions, 3 pack, £1.00", "red-onions"),
   ];
   // Each tap shows the next real sample photo and the AI reads it live.
   const sampleIdx = { find: 0, compare: 0, read: 0 };
