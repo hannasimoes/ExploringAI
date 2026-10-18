@@ -346,6 +346,17 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <button type="button" id="testVoice">🔊 Test voice</button>
       <p class="muted" id="voiceNote" style="font-size:.95rem">No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up.</p>
     </div>
+    <div class="panel">
+      <h2 id="apiH">Smarter AI (optional)</h2>
+      <p class="muted" style="font-size:.95rem">Add an Anthropic API key to use Claude Vision everywhere in GuideCart, including walk mode. It recognises almost anything and reads any text. The key is stored only on this phone. Each check costs a fraction of a penny.</p>
+      <label for="apiKey" class="sr">Anthropic API key</label>
+      <input id="apiKey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+      <div class="row2">
+        <button type="button" id="apiSave" class="primary" style="min-height:58px;font-size:1.05rem">Save key</button>
+        <button type="button" id="apiRemove">Remove key</button>
+      </div>
+      <p class="muted" id="apiNote" style="font-size:.95rem"></p>
+    </div>
     <button type="button" id="showOnb">Show introduction again</button>
   </section>
 </div>
@@ -487,6 +498,17 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   document.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => go(b.dataset.go)));
   $("onbDone").onclick = () => { settings.onboarded = true; applySettings(); go("home"); say("Welcome to GuideCart."); };
   $("showOnb").onclick = () => go("onboarding");
+  function apiStatus() {
+    $("apiNote").textContent = apiKey ? "Claude Vision is on. Key ending in " + apiKey.slice(-4) + "." : (claudeVision ? "Claude Vision is already on inside Claude. A key is only needed on the website." : "No key saved. GuideCart uses the smaller on-phone AI.");
+    $("engineNote").textContent = claudeVision ? "AI service: Claude Vision. Photos are not stored by GuideCart." : apiKey ? "AI service: Claude Vision (your API key). Photos are not stored by GuideCart." : "AI service: on-phone AI. Photos never leave your phone.";
+  }
+  $("apiSave").onclick = () => {
+    const v = $("apiKey").value.trim();
+    if (!/^sk-ant-/.test(v)) { $("apiNote").textContent = "That doesn't look like an Anthropic key. It should start with sk-ant-."; say($("apiNote").textContent); return; }
+    apiKey = v; keep("apikey", v); $("apiKey").value = ""; apiStatus(); say("Key saved. Claude Vision is on.");
+  };
+  $("apiRemove").onclick = () => { apiKey = ""; keep("apikey", ""); apiStatus(); say("Key removed."); };
+  setTimeout(apiStatus, 1500);
 
   // ---------- List (M03) ----------
   const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
@@ -675,10 +697,45 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     setTimeout(() => parts.forEach(pc => { const u = new SpeechSynthesisUtterance(pc.trim()); u.lang = "en-GB"; if (voice) u.voice = voice; speechSynthesis.speak(u); }), 200);
   }
   const toBlob = (c) => new Promise(r => c.toBlob(r, "image/jpeg", 0.88));
+  // ---- Claude Vision through the user's own API key (website mode) ----
+  let apiKey = load("apikey", "");
+  const hasVision = () => claudeVision || !!apiKey;
+  function smallJpeg(canvas, max) {
+    const s = Math.min(1, max / Math.max(canvas.width, canvas.height)), c = document.createElement("canvas");
+    c.width = Math.round(canvas.width * s); c.height = Math.round(canvas.height * s);
+    c.getContext("2d").drawImage(canvas, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.8).split(",")[1];
+  }
+  function parseJSON(text) {
+    const s = String(text || ""), a = s.indexOf("{"), b = s.lastIndexOf("}");
+    if (a < 0 || b < a) throw { code: "invalid_json" };
+    return JSON.parse(s.slice(a, b + 1));
+  }
+  async function apiVision(prompt, canvas, { fast = false, signal } = {}) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST", signal,
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json", "anthropic-dangerous-direct-browser-access": "true" },
+      body: JSON.stringify({
+        model: fast ? "claude-haiku-5-5" : "claude-sonnet-5-5", max_tokens: fast ? 300 : 1200,
+        messages: [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: smallJpeg(canvas, fast ? 640 : 1280) } },
+          { type: "text", text: prompt + "\nReply with ONLY the JSON object." } ] }],
+      }),
+    }).catch(() => { throw new Error("network"); });
+    if (res.status === 401) throw { code: "bad_key" };
+    if (res.status === 429) throw { code: "rate_limited" };
+    if (!res.ok) throw { code: "upstream_error" };
+    const data = await res.json();
+    return parseJSON((data.content || []).map(c => c.text || "").join(""));
+  }
+  async function visionJSON(prompt, canvas, opts) {
+    if (claudeVision) return sample.json(prompt, { images: await toBlob(canvas), modelTier: opts && opts.fast ? "quick" : "default", cache: false });
+    return apiVision(prompt, canvas, opts);
+  }
 
   async function identify(canvas) {
     const list = pending().map(i => i.name);
-    if (claudeVision) {
+    if (hasVision()) {
       const prompt =
 `You are the vision part of an app for BLIND shoppers. The image is from their phone camera in a supermarket. The user cannot see the screen or the product, so never ask them to look at anything.
 Shopping list: ${JSON.stringify(list)}.
@@ -688,7 +745,7 @@ If you cannot identify a product, say plainly what the image shows instead (e.g.
 "guidance" must be one short instruction a blind person can follow by touch and movement only: distances in centimetres, "turn the product a quarter turn", "move the phone up/left", "hold the product in your other hand", "hold still for two seconds". Use null if nothing is needed.
 Reply with ONLY JSON:
 {"readable": true|false, "seen": "what the image actually shows, in a few words", "product": "short product description, e.g. whole milk, or null", "brand": "brand or null", "size": "pack size as printed, e.g. 1 L, or null", "confidence": "high|medium|low", "list_match": "the matching item from the list, or null", "why_unsure": "short reason if confidence is not high, else null", "guidance": "touch-based instruction or null"}`;
-      return await sample.json(prompt, { images: await toBlob(canvas), modelTier: "default", cache: false });
+      return await visionJSON(prompt, canvas);
     }
     // On-phone fallback: combine object detection with printed words, and only report real grocery words
     await loadWalkAI();
@@ -708,14 +765,14 @@ Reply with ONLY JSON:
     return { readable: true, product, brand: null, size, confidence: match ? "high" : "medium", list_match: match, why_unsure: null };
   }
   async function readLabel(canvas) {
-    if (claudeVision) {
+    if (hasVision()) {
       const prompt =
 `The image is from a BLIND shopper's phone, aimed at a supermarket shelf-edge price label or product packaging. They cannot see the screen.
 Read the product name, the price in pounds, and the pack quantity with its unit. If a metric size is printed (for example 2.272L or 375g) use it rather than pints. For packs sold by number (for example "5 per pack" or "12 per pack") use that number with unit "each". Ignore promotions, star ratings and "per item"/"per litre" figures; read the main price.
 If no price label is readable, say plainly what the image shows instead, and give one instruction they can follow by touch and movement only. Shelf-edge labels sit on the front edge of the shelf, directly under the product; tell them, for example, to "run your fingers along the front edge of the shelf under the product and point the phone there, about 20 cm away".
 Reply with ONLY JSON:
 {"readable": true|false, "seen": "what the image actually shows, in a few words", "product": "name or null", "price": number or null, "quantity": number or null, "unit": "g|kg|ml|l|each or null", "guidance": "touch-based instruction or null"}`;
-      return await sample.json(prompt, { images: await toBlob(canvas), modelTier: "default", cache: false });
+      return await visionJSON(prompt, canvas);
     }
     const text = await ocrText(canvas);
     const pm = text.match(/£\s?(\d+(?:[.,]\d{1,2})?)/) || text.match(/(\d+[.,]\d{2})/);
@@ -728,7 +785,7 @@ Reply with ONLY JSON:
 
   // ---------- Text reader: menus, promotion signs, leaflets ----------
   async function readText(canvas) {
-    if (claudeVision) {
+    if (hasVision()) {
       const prompt =
 `You read printed text aloud for a BLIND person. The image is from their phone camera: it may be a restaurant menu, a shop promotion sign, a supermarket leaflet, a notice or any other text.
 Read ALL legible text. Then organise it so it is easy to listen to.
@@ -738,7 +795,7 @@ Read ALL legible text. Then organise it so it is easy to listen to.
 If the text cannot be read, say what the image shows and give one touch-based instruction (distance in centimetres, move left/right/up/down).
 Reply with ONLY JSON:
 {"readable": true|false, "kind": "menu|promotion|leaflet|sign|label|document|other", "summary": "string", "items": [{"name": "string", "price": "£0.00 or null", "detail": "short extra info or null"}], "full_text": "all the text in reading order, as plain text", "seen": "what the image shows if unreadable, else null", "guidance": "instruction or null"}`;
-      return await sample.json(prompt, { images: await toBlob(canvas), modelTier: "default", cache: false });
+      return await visionJSON(prompt, canvas);
     }
     const lines = await ocrLines(canvas), text = lines.join("\n");
     if (text.replace(/[^A-Za-z]/g, "").length < 4) return { readable: false, seen: "no printed words", guidance: "Hold the phone about 30 centimetres from the text, straight in front of it, and keep still." };
@@ -946,7 +1003,8 @@ Reply with ONLY JSON:
   const onList = (name) => pending().find(i => { const a = stem(i.name), b = stem(name); return a && b && (a.includes(b) || b.includes(a)); });
   let classifier = null;
   // Friendlier names for the 1,000 ImageNet categories the scene model knows (first name only, plus fixes)
-  const SCENE_FIX = { "notebook": "laptop", "notebook computer": "laptop", "desktop computer": "computer", "monitor": "screen", "screen": "screen", "television": "TV", "cellular telephone": "phone", "iPod": "phone", "hand-held computer": "phone", "water bottle": "water bottle", "pop bottle": "drink bottle", "wine bottle": "wine bottle", "beer bottle": "bottle", "grocery store": "supermarket shelves", "shopping cart": "shopping trolley", "shopping basket": "shopping basket", "refrigerator": "fridge", "studio couch": "sofa", "dining table": "table", "desk": "desk", "folding chair": "chair", "rocking chair": "chair", "barber chair": "chair", "throne": "chair", "sliding door": "door", "window shade": "blind", "window screen": "window", "four-poster": "bed", "quilt": "bed", "carton": "carton", "packet": "packet", "plastic bag": "plastic bag", "toilet tissue": "toilet roll", "paper towel": "paper towels", "Granny Smith": "apple", "pomegranate": "fruit", "lemon": "lemon", "orange": "oranges", "banana": "bananas", "bell pepper": "pepper", "head cabbage": "cabbage", "cucumber": "cucumber", "mushroom": "mushrooms", "corn": "corn", "French loaf": "bread", "bagel": "bagel", "pretzel": "pretzel", "pizza": "pizza", "espresso": "coffee", "coffee mug": "mug", "cup": "cup", "plate": "plate", "measuring cup": "jug", "pill bottle": "pill bottle", "lotion": "bottle of lotion", "soap dispenser": "soap", "hair spray": "spray can", "perfume": "perfume", "sunscreen": "sun cream", "price tag": "price tag", "crate": "crate", "bookcase": "shelves", "wardrobe": "wardrobe", "chiffonier": "chest of drawers", "file": "filing cabinet", "entertainment center": "TV unit", "home theater": "TV", "web site": "screen with a web page", "menu": "menu", "envelope": "envelope", "book jacket": "book", "comic book": "book", "binder": "folder", "street sign": "sign", "traffic light": "traffic light", "car mirror": "mirror", "lab coat": "white coat", "jersey": "T-shirt", "sweatshirt": "jumper", "cardigan": "cardigan", "jean": "jeans", "running shoe": "trainers", "sandal": "sandals", "backpack": "backpack", "purse": "handbag", "wallet": "wallet", "umbrella": "umbrella", "lampshade": "lamp", "table lamp": "lamp", "spotlight": "light", "radiator": "radiator", "plant": "plant", "pot": "plant pot", "vase": "vase", "trolleybus": "bus", "minivan": "car", "sports car": "car", "cab": "taxi", "moving van": "van", "golden retriever": "dog", "Labrador retriever": "dog", "tabby": "cat", "Egyptian cat": "cat", "tiger cat": "cat" };
+  const SCENE_FIX = { "notebook": "laptop", "notebook computer": "laptop", "desktop computer": "computer", "monitor": "screen", "screen": "screen", "television": "TV", "cellular telephone": "phone", "iPod": "phone", "hand-held computer": "phone", "water bottle": "water bottle", "pop bottle": "drink bottle", "wine bottle": "wine bottle", "beer bottle": "bottle", "grocery store": "supermarket shelves", "shopping cart": "shopping trolley", "shopping basket": "shopping basket", "refrigerator": "fridge", "studio couch": "sofa", "dining table": "table", "desk": "desk", "folding chair": "chair", "rocking chair": "chair", "barber chair": "chair", "throne": "chair", "sliding door": "door", "window shade": "blind", "washer": "washing machine", "dishwasher": "dishwasher", "teapot": "kettle", "Dutch oven": "pot", "ashcan": "bin", "trash can": "bin", "garbage can": "bin", "park bench": "bench", "picket fence": "fence", "chainlink fence": "fence", "bannister": "stairs", "mountain bike": "bicycle", "bicycle-built-for-two": "bicycle", "pay-phone": "phone", "photocopier": "", "toilet tissue": "", "toilet seat": "", "window screen": "window", "four-poster": "bed", "quilt": "bed", "carton": "carton", "packet": "packet", "plastic bag": "plastic bag", "toilet tissue": "toilet roll", "paper towel": "paper towels", "Granny Smith": "apple", "pomegranate": "fruit", "lemon": "lemon", "orange": "oranges", "banana": "bananas", "bell pepper": "pepper", "head cabbage": "cabbage", "cucumber": "cucumber", "mushroom": "mushrooms", "corn": "corn", "French loaf": "bread", "bagel": "bagel", "pretzel": "pretzel", "pizza": "pizza", "espresso": "coffee", "coffee mug": "mug", "cup": "cup", "plate": "plate", "measuring cup": "jug", "pill bottle": "pill bottle", "lotion": "bottle of lotion", "soap dispenser": "soap", "hair spray": "spray can", "perfume": "perfume", "sunscreen": "sun cream", "price tag": "price tag", "crate": "crate", "bookcase": "shelves", "wardrobe": "wardrobe", "chiffonier": "chest of drawers", "file": "filing cabinet", "entertainment center": "TV unit", "home theater": "TV", "web site": "screen with a web page", "menu": "menu", "envelope": "envelope", "book jacket": "book", "comic book": "book", "binder": "folder", "street sign": "sign", "traffic light": "traffic light", "car mirror": "mirror", "lab coat": "white coat", "jersey": "T-shirt", "sweatshirt": "jumper", "cardigan": "cardigan", "jean": "jeans", "running shoe": "trainers", "sandal": "sandals", "backpack": "backpack", "purse": "handbag", "wallet": "wallet", "umbrella": "umbrella", "lampshade": "lamp", "table lamp": "lamp", "spotlight": "light", "radiator": "radiator", "plant": "plant", "pot": "plant pot", "vase": "vase", "trolleybus": "bus", "minivan": "car", "sports car": "car", "cab": "taxi", "moving van": "van", "golden retriever": "dog", "Labrador retriever": "dog", "tabby": "cat", "Egyptian cat": "cat", "tiger cat": "cat" };
+  const SCENE_EXTRA = ["laptop", "computer", "keyboard", "mouse", "screen", "TV", "phone", "desk", "table", "chair", "sofa", "bed", "lamp", "shelves", "door", "window", "blind", "fridge", "microwave", "oven", "kettle", "toaster", "sink", "washing machine", "dishwasher", "mug", "cup", "plate", "bowl", "jug", "bottle", "water bottle", "drink bottle", "wine bottle", "carton", "packet", "plastic bag", "shopping trolley", "shopping basket", "supermarket shelves", "price tag", "crate", "bananas", "apple", "oranges", "lemon", "pepper", "cabbage", "cucumber", "mushrooms", "bread", "pizza", "coffee", "backpack", "handbag", "wallet", "umbrella", "jumper", "T-shirt", "jeans", "trainers", "book", "folder", "envelope", "plant", "plant pot", "vase", "clock", "radiator", "mirror", "sign", "traffic light", "car", "bus", "taxi", "van", "bicycle", "dog", "cat", "stairs", "lift", "escalator", "bench", "bin", "fence"];
   function sceneName(label) {
     const first = String(label).split(",")[0].trim();
     for (const part of String(label).split(",").map(s => s.trim())) if (SCENE_FIX[part]) return SCENE_FIX[part];
@@ -966,7 +1024,7 @@ Reply with ONLY JSON:
     if (!detectorLoading) detectorLoading = withTimeout((async () => {
       await loadTf();
       await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js");
-      detector = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+      detector = await cocoSsd.load({ base: "mobilenet_v2" });
       return detector;
     })(), 40000).catch(e => { detectorLoading = null; throw e; });
     return detectorLoading;
@@ -976,7 +1034,7 @@ Reply with ONLY JSON:
     if (!classifierLoading) classifierLoading = withTimeout((async () => {
       await loadTf();
       await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js");
-      classifier = await mobilenet.load({ version: 2, alpha: 0.5 });
+      classifier = await mobilenet.load({ version: 2, alpha: 1.0 });
       return classifier;
     })(), 40000).catch(e => { classifierLoading = null; throw e; });
     return classifierLoading;
@@ -1026,15 +1084,17 @@ Reply with ONLY JSON:
   }
   // Objects the small model often imagines need a much higher score before we mention them
   const HIGH_BAR = new Set(["toilet", "bed", "oven", "sink", "refrigerator", "tv", "couch", "toaster", "microwave", "hair drier", "teddy bear", "bottle", "vase", "cell phone", "remote", "mouse", "scissors", "toothbrush", "tie", "kite", "umbrella", "suitcase", "handbag", "backpack", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "airplane", "train", "boat", "bus", "truck", "motorcycle", "fire hydrant", "parking meter", "stop sign", "frisbee", "skis", "snowboard", "sports ball", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "hot dog", "pizza", "donut", "cake", "sandwich", "wine glass", "knife", "fork", "spoon"]);
-  const minScore = (cls) => HIGH_BAR.has(cls) ? 0.75 : 0.65;
-  const SCENE_OK = new Set(Object.values(SCENE_FIX));
+  const minScore = (cls) => HIGH_BAR.has(cls) ? 0.68 : 0.5;
+  const SCENE_OK = new Set(SCENE_EXTRA);
   // Only mention something once it has been seen in two checks in a row
   const seenStreak = { det: {}, cls: {} }, lastSeen = { det: [], cls: [] };
+  // Keep the last three checks per model; something counts once it appears in two of them
   function confirmed(items, kind) {
-    const h = seenStreak[kind], now = new Set(items.map(i => i.name));
-    Object.keys(h).forEach(k => { if (!now.has(k)) delete h[k]; });
-    items.forEach(i => { h[i.name] = (h[i.name] || 0) + 1; });
-    return items.filter(i => h[i.name] >= 2);
+    const h = seenStreak[kind];
+    h.hist = h.hist || [];
+    h.hist.push(new Set(items.map(i => i.name)));
+    if (h.hist.length > 3) h.hist.shift();
+    return items.filter(i => h.hist.filter(s => s.has(i.name)).length >= 2);
   }
   // Things that usually carry printed words worth reading out
   const READABLE = new Set(["bottle", "cup", "bowl", "book", "vase", "wine glass", "cell phone", "laptop", "tv", "refrigerator", "suitcase", "handbag", "backpack", "cake", "sandwich", "pizza", "donut", "remote", "clock"]);
@@ -1078,8 +1138,8 @@ Reply with ONLY JSON:
     const tick = walkTick++;
     const { c, k } = smallFrame();
     try {
-      if (detector) {
-        const all = (await detector.detect(c, 8, 0.45)).map(p => ({ ...p, bbox: p.bbox.map(v => v * k) }));
+      if (detector && (tick % 2 === 0 || !classifier)) {
+        const all = (await detector.detect(c, 10, 0.4)).map(p => ({ ...p, bbox: p.bbox.map(v => v * k) }));
         const preds = all.filter(p => p.score >= minScore(p.class));
         maybeReadObject(all);
         if (!walking) return;
@@ -1091,7 +1151,7 @@ Reply with ONLY JSON:
         const top = await classifier.classify(c, 3);
         if (!walking) return;
         const raw = top.map(x => ({ name: sceneName(x.className), x: 0.5, scene: true, p: x.probability }))
-          .filter(x => (SCENE_OK.has(x.name) && x.p > 0.3) || x.p > 0.45);
+          .filter(x => x.name && SCENE_OK.has(x.name) && x.p > 0.35);
         const okc = confirmed(raw, "cls"); found.push(...okc); lastSeen.cls = okc.map(o => o.name);
       }
     } catch (_) {}
@@ -1124,8 +1184,8 @@ Reply with ONLY JSON:
     const close = others.filter(f => f.near && !f.scene), placed = others.filter(f => !f.near && !f.scene).slice(0, 3);
     const scene = others.filter(f => f.scene && !placed.some(p => p.name.replace(/^an? /, "") === f.name)).slice(0, 2);
     close.forEach(f => parts.push(`${cap(f.name)} very close, ${side(f.x)}.`));
-    if (placed.length) parts.push("I can see " + placed.map(f => `${f.name} ${side(f.x)}`).join(", ") + ".");
-    if (scene.length) parts.push("In front of you: " + scene.map(f => f.name).join(" and ") + ".");
+    if (placed.length) parts.push("You're passing " + placed.map(f => `${f.name} ${side(f.x)}`).join(", ") + ".");
+    if (scene.length) parts.push("Also nearby: " + scene.map(f => (/^(a|an|the) /.test(f.name) || /s$/.test(f.name) ? f.name : (/^[aeiou]/i.test(f.name) ? "an " : "a ") + f.name)).join(" and ") + ".");
     const msg = parts.join(" ");
     $("statusIc").textContent = listed.length ? "★" : "🚶";
     $("statusText").textContent = msg;
@@ -1140,8 +1200,49 @@ Reply with ONLY JSON:
       speechSynthesis.speak(u);
     }, listed.length && talking ? 150 : 0);
   }
+  // With Claude Vision, walk mode sends a small frame every few seconds and Claude describes what's new
+  let lastScene = "";
+  async function claudeWalkLoop(gen) {
+    while (walking && gen === walkGen) {
+      const t0 = Date.now();
+      try {
+        if (video.videoWidth) {
+          const c = document.createElement("canvas"); c.width = video.videoWidth; c.height = video.videoHeight;
+          c.getContext("2d").drawImage(video, 0, 0);
+          const list = pending().map(i => i.name);
+          const r = await apiVision(
+`You are the eyes of a BLIND person walking with their phone camera held at chest height. This is the current camera view.
+Their shopping list: ${JSON.stringify(list)}.
+Previously you said: ${JSON.stringify(lastScene || "nothing yet")}.
+Say what they are passing now, in one or two short spoken sentences: the main objects, people or obstacles with their position (on your left, ahead, on your right), and read any large printed text such as signs or product names. Mention anything on their list first. Warn about anything very close ahead. Do not repeat what you already said unless it matters. Only describe what you can clearly see.
+JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "names", "of", "things", "in", "view"], "on_list": "list item seen, or null"}`, c, { fast: true });
+          if (!walking || gen !== walkGen) return;
+          const seeing = Array.isArray(r.seeing) ? r.seeing.slice(0, 8) : [];
+          $("seeing").hidden = false; $("seeing").textContent = seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet";
+          const msg = String(r.say || "").trim();
+          if (msg && norm(msg) !== norm(lastScene)) {
+            lastScene = msg;
+            $("statusIc").textContent = r.on_list && r.on_list !== "null" ? "★" : "🚶"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
+            if (r.on_list && r.on_list !== "null") { try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {} }
+            if (settings.voice === "sr") $("live").textContent = msg;
+            else if (settings.voice === "app" && window.speechSynthesis) { const u = new SpeechSynthesisUtterance(msg); u.lang = "en-GB"; if (voice) u.voice = voice; speechSynthesis.speak(u); }
+          }
+        }
+      } catch (e) {
+        if (e && e.code === "bad_key") { status("error", "The Claude API key was refused. Check it in Settings, under Smarter AI."); stopWalk(true); return; }
+      }
+      await sleep(Math.max(600, 3000 - (Date.now() - t0)));
+    }
+  }
   async function startWalk() {
     if (!stream) { askCamera(startWalk); return; }
+    if (apiKey && !claudeVision) {
+      walking = true; lastHeard = {}; lastScene = ""; stopAim();
+      $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
+      status("ok", "Walk mode on, using Claude Vision. Hold the phone upright at chest height and move slowly. I'll tell you what you're passing.");
+      claudeWalkLoop(++walkGen);
+      return;
+    }
     walking = true; lastHeard = {}; stopAim();
     $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
     status("busy", "Starting walk mode. Loading the object finder, this takes a few seconds the first time.");
@@ -1150,14 +1251,15 @@ Reply with ONLY JSON:
     if (!detector) { status("error", "Walk mode couldn't load its AI. Check your internet connection, then try again.", { retry: startWalk }); stopWalk(true); return; }
     status("ok", "Walk mode on. Hold the phone upright at chest height and move slowly. I'll tell you what I can see, and when something is on your list.");
     walkLoop(++walkGen);
-    // Only the object finder and the label reader: the 1,000-category scene model guessed too often
+    // The scene model (filtered to everyday things) and the label reader join in when ready
+    loadClassifier().catch(() => null);
     getWorker().then(w => { ocrWorker = w; }).catch(() => null);
   }
   function hush() { try { window.speechSynthesis && speechSynthesis.cancel(); } catch (_) {} }
   function stopWalk(silent) {
     const was = walking;
     if (was) hush();
-    walking = false; drawBoxes([]); $("seeing").hidden = true; seenStreak.det = {}; seenStreak.cls = {}; lastSeen.det = []; lastSeen.cls = [];
+    walking = false; walkGen++; drawBoxes([]); $("seeing").hidden = true; seenStreak.det = {}; seenStreak.cls = {}; lastSeen.det = []; lastSeen.cls = [];
     $("walkBtn").setAttribute("aria-pressed", "false"); $("walkBtn").textContent = "🚶 Walk mode: tell me what I pass";
     if (stream) setChip();
     if (was && !silent) status("info", "Walk mode off.");
@@ -1332,6 +1434,7 @@ Reply with ONLY JSON:
     if (code === "rate_limited") return "Too many checks in a short time. Wait a minute, then try again.";
     if (code === "not_granted" || code === "sampling_disabled") return "The AI service isn't allowed for this page. Allow it when asked, then try again.";
     if (code === "session_expired") return "You've been signed out. Sign in again, then try again.";
+    if (code === "bad_key") return "The Claude API key was refused. Check it in Settings, under Smarter AI.";
     if (e && e.message === "network" && window.claude && !claudeVision) return "The AI photo reader isn't switched on in this view. Close and reopen GuideCart and choose Allow when it asks to use Claude, or open it on the claude.ai website.";
     if (e && e.message === "network") return "No internet connection. Check your signal, then try again.";
     return "The AI service didn't answer. Try again in a moment.";
@@ -1344,7 +1447,7 @@ Reply with ONLY JSON:
     const q = isSample || mode === "read" ? null : imageQuality(c);
     if (q) { status("warn", q, { retry: () => runCheck() }); return; }
     setBusy(true);
-    status("busy", mode === "find" ? "Checking the product…" : mode === "read" ? (claudeVision ? "Reading the text…" : "Reading the text. This can take up to 10 seconds the first time…") : "Reading the price label…");
+    status("busy", mode === "find" ? "Checking the product…" : mode === "read" ? (hasVision() ? "Reading the text…" : "Reading the text. This can take up to 10 seconds the first time…") : "Reading the price label…");
     try {
       if (mode === "find") showMatch(await identify(c));
       else if (mode === "read") showReading(await readText(c));

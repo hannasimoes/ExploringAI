@@ -37,7 +37,8 @@ Every button says its name aloud when tapped (in App voice mode). Every instruct
 - **AI services:**
   - **Claude Vision** (Anthropic) when the app is opened inside Claude: reads products, brands, sizes and prices from the photo and reports its confidence.
   - **Tesseract.js** OCR on the phone when opened from GitHub Pages: reads the printed text on packs and labels. Photos never leave the phone.
-- **Walk mode:** a few times a second the live frame goes through COCO-SSD object detection (TensorFlow.js), which finds and places about 80 kinds of common object (people, chairs, tables, bottles, fruit). A 1,000-category scene classifier was tested but removed from walk mode because it produced too many false descriptions. When a bottle, pack, book or screen is in view, GuideCart crops it from the full-resolution frame and Tesseract reads the writing on it in the background ("Something with writing on it on your left. It says: Evian Natural Mineral Water."). To avoid false alarms, objects must pass a confidence threshold (higher for objects the small model often imagines) and be seen in two checks in a row before they are mentioned. Matches against a grocery vocabulary and the shopping list are spoken, with repeats suppressed for 10 seconds. Everything runs on the phone; no images are sent anywhere.
+- **Walk mode (on-phone):** the live frame alternates between COCO-SSD object detection (about 80 kinds of common object, with positions) and MobileNet image classification filtered to about 90 everyday things (shelves, trolleys, fridges, screens, doors). An object is only mentioned once it appears in two of the last three checks, with higher score thresholds for objects the model often imagines.
+- **Walk mode (Claude Vision, optional):** with an Anthropic API key saved in Settings, a small frame is sent to Claude every few seconds and Claude describes what the user is passing, reads signs and product names, and flags list items. The key is entered by the user and stored only on their phone; it is never in the code or this repository.
 - **On-phone image check:** before using the AI, the app checks whether a photo is too dark, too bright or blurry, and tells the user how to fix it.
 - **Speech:** the browser's built-in speech synthesis (British English voice); dictation uses the browser's speech recognition where available, with the keyboard microphone as a fallback.
 - **Storage:** the list and settings are kept in the phone's browser storage. Nothing is stored on a server.
@@ -52,7 +53,7 @@ tests/unit-price.test.mjs  arithmetic test for price comparison
 
 ## Security and privacy
 
-- No API key is stored in the app, this repository or any log.
+- No API key is stored in the app's code, this repository or any log. The optional key for Claude Vision is typed in by the user and kept only in their phone's browser storage.
 - Photos are not saved. In GitHub Pages mode they are processed only on the phone.
 - The camera is only used after the user taps a button.
 
