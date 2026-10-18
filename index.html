@@ -283,7 +283,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     </div>
     <button type="button" id="aimBtn" aria-pressed="true" hidden>🎯 Aim guide: on</button>
     <button type="button" id="walkBtn" aria-pressed="false">🚶 Walk mode: tell me what I pass</button>
-    <p class="muted" id="walkNote" style="font-size:.95rem">Walk mode keeps the camera on and describes what's around you as you move: products, people, chairs, tables and more. It reads the writing on bottles, packs and books, and says when something is on your list. It uses more battery. Hold the phone upright at chest height, camera facing the shelves.</p>
+    <p class="muted" id="walkNote" style="font-size:.95rem">Walk mode keeps the camera on and tells you what's around you as you move: people, chairs, tables, bottles, fruit and other common objects. It reads the writing on bottles, packs and books, and says when something is on your list. It uses more battery. Hold the phone upright at chest height, camera facing the shelves.</p>
     <button type="button" id="tipsBtn">🔊 How to take a good photo</button>
     <button type="button" id="sampleBtn">🖼 Sample photo</button>
 
@@ -832,6 +832,7 @@ Reply with ONLY JSON:
     if (viaGlasses) { chip.textContent = (walking ? "🕶 Walk mode" : "🕶 Ray-Ban Meta"); const s = document.createElement("span"); s.className = "glasses-tag"; s.textContent = "preview"; chip.append(s); }
   }
   function stopCamera(silent) {
+    hush();
     stopWalk(true); stopAim(); viaGlasses = false; $("aimBtn").hidden = true;
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     video.hidden = true; $("camBtn").textContent = "▶ Live camera"; $("camChip").textContent = "Camera off";
@@ -863,6 +864,7 @@ Reply with ONLY JSON:
   let aimResume = 0;
   let aimOn = true, aimTimer = null, aimBusy = false, aimTick = 0, steady = 0, lastTip = { text: "", t: 0 }, aimNoneSince = 0;
   function aimSay(text, force) {
+    if (!stream || walking) return;
     const now = Date.now();
     if (!force && text === lastTip.text && now - lastTip.t < 4000) return;
     if (!force && now - lastTip.t < 1800) return;
@@ -1024,7 +1026,7 @@ Reply with ONLY JSON:
   }
   // Objects the small model often imagines need a much higher score before we mention them
   const HIGH_BAR = new Set(["toilet", "bed", "oven", "sink", "refrigerator", "tv", "couch", "toaster", "microwave", "hair drier", "teddy bear", "bottle", "vase", "cell phone", "remote", "mouse", "scissors", "toothbrush", "tie", "kite", "umbrella", "suitcase", "handbag", "backpack", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "airplane", "train", "boat", "bus", "truck", "motorcycle", "fire hydrant", "parking meter", "stop sign", "frisbee", "skis", "snowboard", "sports ball", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "hot dog", "pizza", "donut", "cake", "sandwich", "wine glass", "knife", "fork", "spoon"]);
-  const minScore = (cls) => HIGH_BAR.has(cls) ? 0.75 : 0.6;
+  const minScore = (cls) => HIGH_BAR.has(cls) ? 0.75 : 0.65;
   const SCENE_OK = new Set(Object.values(SCENE_FIX));
   // Only mention something once it has been seen in two checks in a row
   const seenStreak = { det: {}, cls: {} }, lastSeen = { det: [], cls: [] };
@@ -1076,7 +1078,7 @@ Reply with ONLY JSON:
     const tick = walkTick++;
     const { c, k } = smallFrame();
     try {
-      if (detector && (tick % 2 === 0 || !classifier)) {
+      if (detector) {
         const all = (await detector.detect(c, 8, 0.45)).map(p => ({ ...p, bbox: p.bbox.map(v => v * k) }));
         const preds = all.filter(p => p.score >= minScore(p.class));
         maybeReadObject(all);
@@ -1133,6 +1135,7 @@ Reply with ONLY JSON:
     if (settings.voice === "off" || !window.speechSynthesis) return;
     if (listed.length && talking) speechSynthesis.cancel();
     setTimeout(() => {
+      if (!walking) return;
       const u = new SpeechSynthesisUtterance(msg); u.lang = "en-GB"; if (voice) u.voice = voice; u.rate = 1.05;
       speechSynthesis.speak(u);
     }, listed.length && talking ? 150 : 0);
@@ -1147,18 +1150,20 @@ Reply with ONLY JSON:
     if (!detector) { status("error", "Walk mode couldn't load its AI. Check your internet connection, then try again.", { retry: startWalk }); stopWalk(true); return; }
     status("ok", "Walk mode on. Hold the phone upright at chest height and move slowly. I'll tell you what I can see, and when something is on your list.");
     walkLoop(++walkGen);
-    // The scene model and the label reader load in the background and join in when ready
-    loadClassifier().catch(() => null);
+    // Only the object finder and the label reader: the 1,000-category scene model guessed too often
     getWorker().then(w => { ocrWorker = w; }).catch(() => null);
   }
+  function hush() { try { window.speechSynthesis && speechSynthesis.cancel(); } catch (_) {} }
   function stopWalk(silent) {
     const was = walking;
+    if (was) hush();
     walking = false; drawBoxes([]); $("seeing").hidden = true; seenStreak.det = {}; seenStreak.cls = {}; lastSeen.det = []; lastSeen.cls = [];
     $("walkBtn").setAttribute("aria-pressed", "false"); $("walkBtn").textContent = "🚶 Walk mode: tell me what I pass";
-    if (stream) { setChip(); if (was) startAim(); }
+    if (stream) setChip();
     if (was && !silent) status("info", "Walk mode off.");
   }
-  $("walkBtn").onclick = () => walking ? stopWalk(false) : startWalk();
+  // Stopping walk mode also turns the camera off, so everything goes quiet
+  $("walkBtn").onclick = () => { if (walking) { stopWalk(true); stopCamera(true); status("info", "Walk mode off. Camera off."); } else startWalk(); };
   document.addEventListener("visibilitychange", () => { if (document.hidden && walking) stopWalk(true); });
 
   function grab() {
