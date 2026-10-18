@@ -57,6 +57,7 @@
 :root.reduce * { animation: none !important; transition: none !important; }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { font-size: calc(18px * var(--scale)); }
 body {
   background: var(--bg); color: var(--ink);
@@ -134,6 +135,16 @@ ul.items button { width: 48px; min-height: 48px; height: 48px; padding: 0; borde
 .samples button { min-height: 64px; font-size: .95rem; padding: 8px 10px; }
 @media (max-width: 360px) { .samples { grid-template-columns: 1fr; } }
 #walkBtn[aria-pressed="true"] { background: var(--alert); border-color: var(--alert); color: #ffffff; }
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.modes button { min-height: 64px; font-size: .9rem; flex-direction: column; gap: 2px; padding: 8px 6px; }
+.modes button[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+#aimBtn[aria-pressed="true"] { border-color: var(--primary); color: var(--primary); }
+.glasses-tag { font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--soft); color: var(--muted); }
+.readout { display: grid; gap: 10px; border: 2px solid var(--primary); border-radius: 16px; padding: 16px; }
+.readout .kind { width: fit-content; font-size: .8rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 3px 10px; border-radius: 999px; background: var(--soft); color: var(--primary); }
+.readout .sum { font-family: var(--display); font-size: 1.15rem; font-weight: 700; }
+.readout ul { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
+.readout .full { white-space: pre-wrap; background: var(--bg); border-radius: 12px; padding: 12px; max-height: 40vh; overflow: auto; font-size: .95rem; }
 .label-card { border: 2px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 10px; }
 .label-card.best { border: 3px solid var(--primary); }
 .fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
@@ -240,9 +251,10 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   <!-- SHOP -->
   <section class="screen" id="s-shop" hidden aria-labelledby="shop-h">
     <h1 id="shop-h">Guided shopping</h1>
-    <div class="row2" role="group" aria-label="Mode">
+    <div class="modes" role="group" aria-label="Mode">
       <button type="button" id="modeFind" aria-pressed="true">🔍 Find product</button>
       <button type="button" id="modeCompare" aria-pressed="false">⚖ Compare prices</button>
+      <button type="button" id="modeRead" aria-pressed="false">📖 Read text</button>
     </div>
     <div class="camera">
       <video id="video" playsinline muted hidden></video>
@@ -257,6 +269,15 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <button type="button" id="camBtn">▶ Live camera</button>
       <label class="btn file-btn">🖼 Take photo<input id="photoInput" type="file" accept="image/*" capture="environment"></label>
     </div>
+    <div class="panel" id="camChoice" hidden aria-labelledby="camChoiceH">
+      <h2 id="camChoiceH">Which camera?</h2>
+      <p class="muted">Use your phone's camera, or connect smart glasses so your hands stay free.</p>
+      <div class="row2">
+        <button type="button" id="usePhone">📱 Phone camera</button>
+        <button type="button" id="useGlasses">🕶 Meta glasses</button>
+      </div>
+    </div>
+    <button type="button" id="aimBtn" aria-pressed="true" hidden>🎯 Aim guide: on</button>
     <button type="button" id="walkBtn" aria-pressed="false">🚶 Walk mode: tell me what I pass</button>
     <p class="muted" id="walkNote" style="font-size:.95rem">Walk mode keeps the camera on and names products as you pass them, saying when one is on your list. It uses more battery. Hold the phone upright at chest height, camera facing the shelves.</p>
     <button type="button" id="tipsBtn">🔊 How to take a good photo</button>
@@ -267,6 +288,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
 
     <div id="findResult"></div>
 
+    <div id="readResult" hidden></div>
     <div class="compare" id="compareArea" hidden>
       <div class="label-card" id="cardA"></div>
       <div class="label-card" id="cardB"></div>
@@ -642,6 +664,61 @@ Reply with ONLY JSON:
       quantity: qm ? parseFloat(qm[1].replace(",", ".")) : null, unit: qm ? qm[2].toLowerCase() : null };
   }
 
+  // ---------- Text reader: menus, promotion signs, leaflets ----------
+  async function readText(canvas) {
+    if (claudeVision) {
+      const prompt =
+`You read printed text aloud for a BLIND person. The image is from their phone camera: it may be a restaurant menu, a shop promotion sign, a supermarket leaflet, a notice or any other text.
+Read ALL legible text. Then organise it so it is easy to listen to.
+- For a menu: group by section, each dish with its price and a few words of description.
+- For promotions or leaflets: each offer with the product, the deal (e.g. "2 for £4.50", "half price"), the price, and any conditions or end date.
+"summary" is 1-2 short spoken sentences saying what this is and the most useful facts (e.g. "A lunch menu with 3 starters and 5 mains, from £6 to £15.").
+If the text cannot be read, say what the image shows and give one touch-based instruction (distance in centimetres, move left/right/up/down).
+Reply with ONLY JSON:
+{"readable": true|false, "kind": "menu|promotion|leaflet|sign|label|document|other", "summary": "string", "items": [{"name": "string", "price": "£0.00 or null", "detail": "short extra info or null"}], "full_text": "all the text in reading order, as plain text", "seen": "what the image shows if unreadable, else null", "guidance": "instruction or null"}`;
+      return await sample.json(prompt, { images: await toBlob(canvas), modelTier: "default", cache: false });
+    }
+    const text = await ocrText(canvas);
+    if (text.replace(/[^A-Za-z]/g, "").length < 4) return { readable: false, seen: "no printed words", guidance: "Hold the phone about 30 centimetres from the text, straight in front of it, and keep still." };
+    const items = (text.match(/[A-Za-z][^£\n]{2,40}£\s?\d+(?:\.\d{2})?/g) || []).slice(0, 12).map(s => { const m = s.match(/^(.*?)£\s?(\d+(?:\.\d{2})?)$/); return { name: m ? m[1].trim() : s, price: m ? "£" + m[2] : null, detail: null }; });
+    return { readable: true, kind: "other", summary: items.length ? `I found ${items.length} prices.` : "Here is the text I could read.", items, full_text: text };
+  }
+  let readingText = "";
+  function showReading(r) {
+    const box = $("readResult"); box.innerHTML = "";
+    if (!r || !r.readable) {
+      const seen = r && r.seen && r.seen !== "null" ? `I can't read any text. I can see ${r.seen}. ` : "I can't read any text. ";
+      status("warn", seen + (r && r.guidance && r.guidance !== "null" ? r.guidance : "Hold the phone about 30 centimetres from the text, straight in front of it, and keep still."), { retry: () => runCheck() });
+      return;
+    }
+    const items = Array.isArray(r.items) ? r.items.filter(i => i && i.name) : [];
+    const card = document.createElement("div"); card.className = "readout";
+    const kind = document.createElement("span"); kind.className = "kind"; kind.textContent = { menu: "Menu", promotion: "Promotion", leaflet: "Leaflet", sign: "Sign", label: "Label", document: "Document" }[r.kind] || "Text"; card.append(kind);
+    const sum = document.createElement("p"); sum.className = "sum"; sum.textContent = r.summary || ""; card.append(sum);
+    if (items.length) {
+      const ul = document.createElement("ul");
+      items.forEach(i => { const li = document.createElement("li"); li.textContent = [i.name, ok(i.price) ? i.price : "", ok(i.detail) ? "(" + i.detail + ")" : ""].filter(Boolean).join(" · "); ul.append(li); });
+      card.append(ul);
+    }
+    readingText = items.length
+      ? items.map(i => [i.name, ok(i.price) ? i.price.replace("£", "") + " pounds" : "", ok(i.detail) ? i.detail : ""].filter(Boolean).join(", ")).join(". ") + "."
+      : String(r.full_text || "");
+    const row = document.createElement("div"); row.className = "row2";
+    const all = document.createElement("button"); all.type = "button"; all.className = "primary"; all.textContent = "🔊 Read everything";
+    all.onclick = () => setTimeout(() => say(readingText || "There's nothing more to read."), 400);
+    const stop = document.createElement("button"); stop.type = "button"; stop.textContent = "■ Stop reading";
+    stop.onclick = () => { if (window.speechSynthesis) setTimeout(() => speechSynthesis.cancel(), 400); };
+    row.append(all, stop); card.append(row);
+    if (r.full_text) {
+      const det = document.createElement("details"); const s = document.createElement("summary"); s.textContent = "Show all the text"; s.style.cursor = "pointer"; s.style.fontWeight = "700";
+      const full = document.createElement("div"); full.className = "full"; full.textContent = r.full_text; det.append(s, full); card.append(det);
+    }
+    box.append(card);
+    const n = items.length;
+    status("ok", `${r.summary || ""} ${n ? `I found ${n} ${r.kind === "menu" ? "dishes" : "items"}. Tap Read everything to hear them all.` : "Tap Read everything to hear all the text."}`);
+  }
+  const ok = (x) => x && x !== "null";
+
   // ---------- Unit-price maths (M07, A04) ----------
   const UNIT = { g: ["mass", 0.001], kg: ["mass", 1], ml: ["vol", 0.001], l: ["vol", 1], each: ["count", 1] };
   function perUnit(price, qty, unit) {
@@ -662,6 +739,7 @@ Reply with ONLY JSON:
   // ---------- Camera (M04) ----------
   let stream = null;
   const video = $("video"), preview = $("preview");
+  let viaGlasses = false;
   async function startCamera() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { noLiveCamera("no-api"); return false; }
     try {
@@ -669,8 +747,11 @@ Reply with ONLY JSON:
     } catch (e) { noLiveCamera(e && e.name === "NotAllowedError" ? "denied" : "blocked"); return false; }
     video.srcObject = stream; video.hidden = false; preview.hidden = true; $("camHint").hidden = true;
     await video.play().catch(() => {});
-    $("camChip").textContent = "● Live"; $("camBtn").textContent = "■ Stop camera";
-    status("ok", "Camera on. The camera is on the back of the phone, at the top. " + (mode === "find" ? "Hold the product about 30 centimetres in front of it and tap Check product." : "Point it at the price label, about 20 centimetres away, and tap Read price label."));
+    setChip(); $("camBtn").textContent = "■ Stop camera";
+    $("aimBtn").hidden = false;
+    if (viaGlasses) status("ok", "Glasses connected. Look towards the shelf and I'll tell you which way to turn your head.");
+    else status("ok", "Camera on. The camera is on the back of the phone, at the top. " + (mode === "find" ? "Hold the product about 30 centimetres in front of it. I'll tell you which way to move." : mode === "read" ? "Point it at the menu or sign, about 30 centimetres away. I'll tell you which way to move." : "Point it at the price label, about 20 centimetres away. I'll tell you which way to move."));
+    startAim();
     return true;
   }
   function noLiveCamera(why) {
@@ -679,14 +760,105 @@ Reply with ONLY JSON:
       : "The live camera isn't available here. Use Take photo instead. It works the same way.";
     status("warn", msg);
   }
+  function setChip() {
+    const chip = $("camChip"); chip.textContent = walking ? "● Walk mode" : "● Live";
+    if (viaGlasses) { chip.textContent = (walking ? "🕶 Walk mode" : "🕶 Ray-Ban Meta"); const s = document.createElement("span"); s.className = "glasses-tag"; s.textContent = "preview"; chip.append(s); }
+  }
   function stopCamera(silent) {
-    stopWalk(true);
+    stopWalk(true); stopAim(); viaGlasses = false; $("aimBtn").hidden = true;
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     video.hidden = true; $("camBtn").textContent = "▶ Live camera"; $("camChip").textContent = "Camera off";
     if (preview.hidden) $("camHint").hidden = false;
     if (!silent) status("info", "Camera off.");
   }
-  $("camBtn").onclick = () => stream ? stopCamera(false) : startCamera();
+  // Ask which camera to use: phone, or Meta smart glasses (concept preview: the phone camera stands in for the glasses feed)
+  $("camBtn").onclick = () => {
+    if (stream) { stopCamera(false); return; }
+    const box = $("camChoice"); box.hidden = false;
+    status("info", "Do you want me to turn on the phone camera, or connect your Meta glasses?");
+  };
+  $("usePhone").onclick = () => { $("camChoice").hidden = true; viaGlasses = false; startCamera(); };
+  $("useGlasses").onclick = async () => {
+    $("camChoice").hidden = true;
+    status("busy", "Looking for your Meta glasses. Make sure they're switched on and near your phone.");
+    await new Promise(r => setTimeout(r, 2200));
+    status("busy", "Found Ray-Ban Meta glasses. Connecting…");
+    await new Promise(r => setTimeout(r, 1800));
+    viaGlasses = true;
+    await startCamera();
+  };
+
+  // ---------- Aim guide: while the live camera is on, say which way to move ----------
+  let aimResume = 0;
+  let aimOn = true, aimTimer = null, aimBusy = false, aimTick = 0, steady = 0, lastTip = { text: "", t: 0 }, aimNoneSince = 0;
+  function aimSay(text, force) {
+    const now = Date.now();
+    if (!force && text === lastTip.text && now - lastTip.t < 4000) return;
+    if (!force && now - lastTip.t < 1800) return;
+    lastTip = { text, t: now };
+    $("statusIc").textContent = "🎯"; $("statusText").textContent = text; $("statusBox").classList.remove("error");
+    say(text);
+  }
+  async function startAim() {
+    stopAim();
+    if (!aimOn || walking) return;
+    steady = 0; aimNoneSince = Date.now();
+    const ok = await loadWalkAI();
+    if (!ok || !stream || walking || !aimOn) return;
+    aimTimer = setInterval(aimStep, 1100);
+  }
+  function stopAim() { clearInterval(aimTimer); aimTimer = null; }
+  async function aimStep() {
+    if (!stream || walking || busy || awaitingConfirm || aimBusy || !video.videoWidth) return;
+    if (Date.now() < aimResume) return;
+    if (mode === "find" && !pending().length) return;
+    if (mode === "compare" && !nextLabel()) return;
+    aimBusy = true;
+    try {
+      const W = video.videoWidth, H = video.videoHeight;
+      let box = null;
+      const wantText = mode !== "find";
+      if (!wantText && detector) {
+        const preds = (await detector.detect(video, 5, 0.5)).filter(p => p.class !== "person" && p.class !== "dining table");
+        preds.sort((a, b) => b.bbox[2] * b.bbox[3] - a.bbox[2] * a.bbox[3]);
+        if (preds[0]) { const [x, y, w, h] = preds[0].bbox; box = { x: x / W, y: y / H, w: w / W, h: h / H }; }
+      }
+      if (!box && ocrWorker && (wantText || aimTick++ % 2 === 0)) {
+        const c = document.createElement("canvas"), sc = Math.min(1, 800 / W); c.width = Math.round(W * sc); c.height = Math.round(H * sc);
+        c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+        const { data } = await ocrWorker.recognize(c);
+        const words = (data.words || []).filter(w => w.confidence > 60 && w.text.replace(/[^A-Za-z0-9£]/g, "").length > 1);
+        if (words.length >= 2) {
+          const x0 = Math.min(...words.map(w => w.bbox.x0)), y0 = Math.min(...words.map(w => w.bbox.y0));
+          const x1 = Math.max(...words.map(w => w.bbox.x1)), y1 = Math.max(...words.map(w => w.bbox.y1));
+          box = { x: x0 / c.width, y: y0 / c.height, w: (x1 - x0) / c.width, h: (y1 - y0) / c.height };
+        }
+      }
+      if (!box) {
+        steady = 0;
+        if (Date.now() - aimNoneSince > 4000) { aimNoneSince = Date.now(); aimSay(viaGlasses ? "I can't see anything clearly yet. Turn your head slowly left and right." : "I can't see a product yet. Move the phone slowly left and right."); }
+        return;
+      }
+      aimNoneSince = Date.now();
+      const cx = box.x + box.w / 2, cy = box.y + box.h / 2, area = box.w * box.h;
+      const mv = viaGlasses ? { l: "Turn your head a little to the left.", r: "Turn your head a little to the right.", u: "Tilt your head up a little.", d: "Tilt your head down a little.", near: "Step a little closer.", far: "Step back a little." }
+                            : { l: "Move the phone a little to the left.", r: "Move the phone a little to the right.", u: "Move the phone up a little.", d: "Move the phone down a little.", near: "Move a little closer.", far: "Move back a little." };
+      let tip = null;
+      if (cx < 0.33) tip = mv.l; else if (cx > 0.67) tip = mv.r;
+      else if (cy < 0.3) tip = mv.u; else if (cy > 0.7) tip = mv.d;
+      else if (area < (wantText ? 0.05 : 0.06)) tip = mv.near; else if (area > 0.85) tip = mv.far;
+      if (tip) { steady = 0; aimSay(tip); return; }
+      steady++;
+      if (steady === 1) aimSay("That's it. Hold still.", true);
+      if (steady >= 2) { steady = 0; lastTip = { text: "", t: Date.now() }; aimResume = Date.now() + (mode === "read" ? 25000 : 8000); runCheck(); }
+    } catch (_) {} finally { aimBusy = false; }
+  }
+  $("aimBtn").onclick = () => {
+    aimOn = !aimOn;
+    $("aimBtn").setAttribute("aria-pressed", String(aimOn)); $("aimBtn").textContent = aimOn ? "🎯 Aim guide: on" : "🎯 Aim guide: off";
+    if (aimOn && stream) { startAim(); say("Aim guide on. I'll tell you which way to move, then check automatically when it's lined up."); }
+    else { stopAim(); say("Aim guide off. Tap the big button when you're ready."); }
+  };
   // ---------- Walk mode: camera always on, names products as the shopper passes them ----------
   // On-phone AI, frame by frame: COCO-SSD object detection (loose fruit, veg, bottles)
   // plus Tesseract text reading (names printed on packs and shelf labels).
@@ -767,8 +939,8 @@ Reply with ONLY JSON:
   }
   async function startWalk() {
     if (!stream) { const ok = await startCamera(); if (!ok) return; }
-    walking = true; lastHeard = {};
-    $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; $("camChip").textContent = "● Walk mode";
+    walking = true; lastHeard = {}; stopAim();
+    $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
     status("busy", "Starting walk mode. Getting the on-phone AI ready, this takes a few seconds the first time.");
     const ok = await loadWalkAI();
     if (!walking) return;
@@ -780,7 +952,7 @@ Reply with ONLY JSON:
     const was = walking;
     walking = false; clearInterval(walkTimer); walkTimer = null;
     $("walkBtn").setAttribute("aria-pressed", "false"); $("walkBtn").textContent = "🚶 Walk mode: tell me what I pass";
-    if (stream) $("camChip").textContent = "● Live";
+    if (stream) { setChip(); if (was) startAim(); }
     if (was && !silent) status("info", "Walk mode off.");
   }
   $("walkBtn").onclick = () => walking ? stopWalk(false) : startWalk();
@@ -874,8 +1046,46 @@ Reply with ONLY JSON:
     C("Pink Lady apples, 4 pack, £2.75", "pink-lady"), C("Red onions, 3 pack, £1.00", "red-onions"),
   ];
   // Each tap shows the next real sample photo and the AI reads it live.
-  const sampleIdx = { find: 0, compare: 0 };
-  const demoSamples = () => mode === "find" ? FIND_SAMPLES.filter(s => !s.check && s.label !== "Back of a box") : COMPARE_SAMPLES;
+  const sampleIdx = { find: 0, compare: 0, read: 0 };
+  function drawMenu() {
+    const [c, g] = canvasOf(900, 1200, "#3b3330");
+    g.fillStyle = "#f7f1e3"; g.fillRect(60, 40, 780, 1120);
+    g.fillStyle = "#2b2420"; g.textAlign = "center"; g.font = "italic bold 58px Georgia"; g.fillText("The Larder", 450, 140);
+    g.font = "24px Georgia"; g.fillText("LUNCH MENU · served 12 – 3pm", 450, 185);
+    const sec = (title, y, rows) => {
+      g.textAlign = "left"; g.font = "bold 30px Georgia"; g.fillText(title, 110, y); y += 18;
+      g.fillRect(110, y, 680, 2); y += 46;
+      rows.forEach(([n, d, p]) => { g.font = "bold 26px Georgia"; g.textAlign = "left"; g.fillText(n, 110, y); g.textAlign = "right"; g.fillText(p, 790, y); g.textAlign = "left"; g.font = "italic 21px Georgia"; g.fillText(d, 110, y + 30); y += 82; });
+      return y + 10;
+    };
+    let y = 270;
+    y = sec("STARTERS", y, [["Tomato & basil soup", "with sourdough bread (v)", "£6.50"], ["Crispy calamari", "lemon mayonnaise", "£8.00"], ["Burrata", "heritage tomatoes, olive oil (v)", "£9.50"]]);
+    y = sec("MAINS", y, [["Fish & chips", "beer-battered cod, peas, tartare sauce", "£15.00"], ["Chicken Caesar salad", "parmesan, croutons", "£13.50"], ["Mushroom risotto", "truffle oil, rocket (v)", "£12.50"], ["Beef burger", "cheddar, pickles, fries", "£14.00"]]);
+    y = sec("DESSERTS", y, [["Sticky toffee pudding", "vanilla ice cream", "£7.00"]]);
+    g.textAlign = "center"; g.font = "italic 20px Georgia"; g.fillText("(v) vegetarian · Please tell us about any allergies", 450, 1120);
+    return c;
+  }
+  function drawPromo() {
+    const [c, g] = canvasOf(900, 1100, "#d8dde3");
+    g.fillStyle = "#ffd200"; g.fillRect(70, 70, 760, 960); g.strokeStyle = "#111"; g.lineWidth = 6; g.strokeRect(70, 70, 760, 960);
+    g.fillStyle = "#c8102e"; g.fillRect(70, 70, 760, 170);
+    g.fillStyle = "#fff"; g.textAlign = "center"; g.font = "bold 96px Arial"; g.fillText("HALF PRICE", 450, 195);
+    g.fillStyle = "#111"; g.font = "bold 54px Arial"; g.fillText("Wholemeal Bread", 450, 340); g.font = "40px Arial"; g.fillText("800g loaf", 450, 400);
+    g.font = "36px Arial"; g.fillText("Was £1.60", 450, 500); g.fillRect(345, 488, 210, 4);
+    g.font = "bold 200px Arial"; g.fillText("80p", 450, 720);
+    g.font = "30px Arial"; g.fillText("10p per 100g", 450, 790);
+    g.font = "bold 32px Arial"; g.fillText("Offer ends Sunday 25 October", 450, 900);
+    g.font = "24px Arial"; g.fillText("Limit 2 per customer. While stocks last.", 450, 960);
+    return c;
+  }
+  const READ_SAMPLES = [
+    { label: "Restaurant menu", make: async () => drawMenu() },
+    { label: "Supermarket offers", make: () => photo("offers-1.jpg") },
+    { label: "Promotion sign", make: async () => drawPromo() },
+    { label: "Offers page 2", make: () => photo("offers-2.jpg") },
+    { label: "Offers page 3", make: () => photo("offers-3.jpg") },
+  ];
+  const demoSamples = () => mode === "find" ? FIND_SAMPLES.filter(s => !s.check && s.label !== "Back of a box") : mode === "read" ? READ_SAMPLES : COMPARE_SAMPLES;
   function sampleLabel() { const list = demoSamples(); return `🖼 Sample photo (${(sampleIdx[mode] % list.length) + 1} of ${list.length})`; }
   $("sampleBtn").onclick = async () => {
     if (busy) return;
@@ -887,25 +1097,29 @@ Reply with ONLY JSON:
     try { c = await s.make(); } catch (_) { status("error", "That sample photo couldn't be loaded. Tap Sample photo again for the next one."); return; }
     showPreview(c.toDataURL("image/jpeg", 0.9)); runCheck(c, true);
   };
-  $("tipsBtn").onclick = () => say(mode === "find" ? TURN_TIP : SHELF_TIP);
+  $("tipsBtn").onclick = () => say(mode === "find" ? TURN_TIP : mode === "read" ? "Hold the phone about 30 centimetres from the text, straight in front of it. For a menu, lay it flat on the table and hold the phone above it at about the height of your elbow." : SHELF_TIP);
 
   // ---------- Find mode (M05, M06) ----------
   let mode = "find", busy = false, awaitingConfirm = false;
   function shopIntro() {
+    if (mode === "read") return "Read text. Point the camera at a menu, a promotion sign or a leaflet, about 30 centimetres away, then tap Read text. I'll give you a short summary first.";
     return mode === "find"
       ? `Guided shopping, find product. Hold one product in your hand, about 30 centimetres from the phone, roughly the length of your forearm. Then tap Check product, the large button in the middle of the screen. ${pending().length ? "Still to get: " + pending().map(i => i.name).join(", ") + "." : ""}`
       : "Guided shopping, compare prices. Feel along the front edge of the shelf, just under the product, to find the price label. Hold the phone about 20 centimetres in front of it, then tap Read price label.";
   }
   function setMode(m) {
-    mode = m; $("modeFind").setAttribute("aria-pressed", String(m === "find")); $("modeCompare").setAttribute("aria-pressed", String(m === "compare"));
-    $("checkBtn").textContent = m === "find" ? "📷 Check product" : "📷 Read price label";
-    $("findResult").hidden = m !== "find"; $("compareArea").hidden = m !== "compare";
+    mode = m; ["Find", "Compare", "Read"].forEach(k => $("mode" + k).setAttribute("aria-pressed", String(m === k.toLowerCase())));
+    $("checkBtn").textContent = m === "find" ? "📷 Check product" : m === "read" ? "📖 Read text" : "📷 Read price label";
+    $("findResult").hidden = m !== "find"; $("compareArea").hidden = m !== "compare"; $("readResult").hidden = m !== "read";
+    steady = 0;
     $("sampleBtn").textContent = "🖼 Sample photo";
     if (m === "compare") { renderCompare(); status("info", nextLabel() ? `Point at price label ${nextLabel()} and tap Read price label.` : "Both labels read. Confirm each one to compare."); }
+    else if (m === "read") status("info", shopIntro());
     else status("info", "Hold a product about 30 centimetres from the phone and tap Check product.");
   }
   $("modeFind").onclick = () => setMode("find");
   $("modeCompare").onclick = () => setMode("compare");
+  $("modeRead").onclick = () => setMode("read");
 
   function setBusy(b) { busy = b; $("checkBtn").disabled = b; $("sampleBtn").disabled = b; }
   function errorFor(e) {
@@ -925,9 +1139,10 @@ Reply with ONLY JSON:
     const q = isSample ? null : imageQuality(c);
     if (q) { status("warn", q, { retry: () => runCheck() }); return; }
     setBusy(true);
-    status("busy", mode === "find" ? "Checking the product…" : "Reading the price label…");
+    status("busy", mode === "find" ? "Checking the product…" : mode === "read" ? "Reading the text…" : "Reading the price label…");
     try {
       if (mode === "find") showMatch(await identify(c));
+      else if (mode === "read") showReading(await readText(c));
       else storeLabel(await readLabel(c));
     } catch (e) {
       status("error", errorFor(e), { retry: () => runCheck(c) });
@@ -967,7 +1182,6 @@ Reply with ONLY JSON:
       return;
     }
     const conf = CONF[r.confidence] || CONF.low;
-    const ok = (x) => x && x !== "null";
     const desc = r.product + (ok(r.brand) && !norm(r.product).includes(norm(r.brand)) ? " by " + r.brand : "") + (ok(r.size) ? ", " + r.size : "");
     const match = r.list_match && pending().find(i => norm(i.name) === norm(r.list_match) || norm(r.list_match).includes(norm(i.name)) || norm(i.name).includes(norm(r.list_match)));
     const card = document.createElement("div"); card.className = "result";

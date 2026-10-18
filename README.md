@@ -22,6 +22,9 @@ No account, no install and no app store needed.
 | My list | Type items separated by commas, or dictate them. The list is saved on the phone. |
 | Shop → Find product | The live camera (or a photo) captures a product. The AI reads it and says, for example, "Possibly semi-skimmed milk, 4 pints. Fairly sure. Is this the milk on your list?" The item is ticked off only after you tap **Yes**. |
 | Shop → Compare prices | Read two price labels. GuideCart reads the price and pack size aloud, you confirm or correct them, and it says which is better value per kg, litre or item. It never compares weight with volume. |
+| Shop → Read text | Point at a restaurant menu, a promotion sign or a supermarket leaflet. GuideCart gives a short spoken summary ("A lunch menu with 3 starters and 4 mains, from £6.50 to £15"), lists each dish or offer with its price, and can read everything aloud. |
+| Live camera → Aim guide | While the camera is on, GuideCart says which way to move ("Move the phone a little to the left", "Move a little closer") and checks automatically once the product or text is lined up. |
+| Live camera → Meta glasses | When turning the camera on, GuideCart asks whether to use the phone camera or Meta smart glasses. **The glasses option is a concept preview**: it shows the connection flow and head-movement guidance, but uses the phone camera. A real integration would use Meta's Wearables Device Access Toolkit in a native app. |
 | Shop → Walk mode | The camera stays on while you walk down the aisle. GuideCart names products as you pass them ("Passing tomatoes, carrots") and tells you when one is on your list ("Milk, on your right. That's on your list!"). |
 | Settings | Spoken results (app voice, screen reader or off), text and button size, theme, high contrast and reduced motion. |
 
