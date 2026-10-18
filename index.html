@@ -885,7 +885,8 @@ Reply with ONLY JSON:
       let box = null;
       const wantText = mode !== "find";
       if (!wantText && detector) {
-        const preds = (await detector.detect(video, 5, 0.5)).filter(p => PRODUCT_CLASSES.has(p.class));
+        const sf = smallFrame();
+        const preds = (await detector.detect(sf.c, 5, 0.5)).filter(p => PRODUCT_CLASSES.has(p.class)).map(p => ({ ...p, bbox: p.bbox.map(v => v * sf.k) }));
         preds.sort((a, b) => b.bbox[2] * b.bbox[3] - a.bbox[2] * a.bbox[3]);
         if (preds[0]) { const [x, y, w, h] = preds[0].bbox; box = { x: x / W, y: y / H, w: w / W, h: h / H }; }
       }
@@ -945,24 +946,52 @@ Reply with ONLY JSON:
     return first;
   }
   let walking = false, walkTimer = null, walkBusy = false, walkTick = 0, lastHeard = {}, detector = null, ocrWorker = null;
-  async function loadWalkAI() {
-    const jobs = [];
-    if (!detector) jobs.push((async () => {
-      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js");
-      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js");
-      detector = await cocoSsd.load({ base: "mobilenet_v2" });
-    })().catch(() => { detector = null; }));
-    if (!classifier) jobs.push((async () => {
-      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js");
-      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js");
-      classifier = await mobilenet.load({ version: 2, alpha: 1.0 });
-    })().catch(() => { classifier = null; }));
-    if (!ocrWorker) jobs.push((async () => {
-      ocrWorker = await getWorker();
-    })().catch(() => { ocrWorker = null; }));
-    await Promise.all(jobs);
-    return !!(detector || classifier || ocrWorker);
+  // Light models only, so the phone stays responsive: COCO-SSD "lite" and MobileNet v2 at half width.
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+  async function loadTf() {
+    await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js");
+    try { await tf.setBackend("webgl"); } catch (_) {}
+    await tf.ready();
   }
+  let detectorLoading = null, classifierLoading = null;
+  function loadDetector() {
+    if (detector) return Promise.resolve(detector);
+    if (!detectorLoading) detectorLoading = withTimeout((async () => {
+      await loadTf();
+      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js");
+      detector = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+      return detector;
+    })(), 40000).catch(e => { detectorLoading = null; throw e; });
+    return detectorLoading;
+  }
+  function loadClassifier() {
+    if (classifier) return Promise.resolve(classifier);
+    if (!classifierLoading) classifierLoading = withTimeout((async () => {
+      await loadTf();
+      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js");
+      classifier = await mobilenet.load({ version: 2, alpha: 0.5 });
+      return classifier;
+    })(), 40000).catch(e => { classifierLoading = null; throw e; });
+    return classifierLoading;
+  }
+  // Used by the aim guide and the on-phone product check: detector + text reader (no scene model)
+  async function loadWalkAI() {
+    await Promise.all([
+      loadDetector().catch(() => null),
+      getWorker().then(w => { ocrWorker = w; }).catch(() => null),
+    ]);
+    return !!(detector || ocrWorker);
+  }
+  // A small copy of the camera frame: much faster for the models than the full video
+  const smallCanvas = document.createElement("canvas");
+  function smallFrame() {
+    const W = video.videoWidth, H = video.videoHeight, s = 320 / Math.max(W, H);
+    smallCanvas.width = Math.round(W * s); smallCanvas.height = Math.round(H * s);
+    smallCanvas.getContext("2d").drawImage(video, 0, 0, smallCanvas.width, smallCanvas.height);
+    return { c: smallCanvas, k: 1 / s };
+  }
+  const nextFrame = () => new Promise(r => requestAnimationFrame(() => r()));
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   // Draw what the AI sees on top of the live camera, with labels
   function drawBoxes(preds) {
     const cv = $("boxes"); if (!cv) return;
@@ -988,32 +1017,33 @@ Reply with ONLY JSON:
     c.getContext("2d").drawImage(video, (vw - cw) / 2, (vh - chh) / 2, cw, chh, 0, 0, c.width, c.height);
     return c;
   }
+  // One model per step, then a pause, so taps (like Stop) always get through
   async function walkStep() {
-    if (!walking || walkBusy || !video.videoWidth) return;
-    walkBusy = true;
+    if (!walking || !video.videoWidth) return;
+    const found = [];
+    const tick = walkTick++;
+    const { c, k } = smallFrame();
     try {
-      const found = [];
-      const tick = walkTick++;
-      if (classifier && tick % 2 === 0) {
-        const top = await classifier.classify(video, 4);
-        top.filter(c => c.probability > 0.18).forEach(c => found.push({ name: sceneName(c.className), x: 0.5, scene: true }));
-      }
-      if (detector) {
-        const preds = await detector.detect(video, 10, 0.4);
+      if (detector && (tick % 2 === 0 || !classifier)) {
+        const preds = (await detector.detect(c, 8, 0.4)).map(p => ({ ...p, bbox: p.bbox.map(v => v * k) }));
+        if (!walking) return;
         drawBoxes(preds);
         preds.forEach(p => { const n = COCO_NAMES[p.class] || "a " + p.class; found.push({ name: n, x: (p.bbox[0] + p.bbox[2] / 2) / video.videoWidth, near: (p.bbox[2] * p.bbox[3]) / (video.videoWidth * video.videoHeight) > 0.35 }); });
+      } else if (classifier) {
+        const top = await classifier.classify(c, 3);
+        if (!walking) return;
+        top.filter(x => x.probability > 0.2).forEach(x => found.push({ name: sceneName(x.className), x: 0.5, scene: true }));
       }
-      if (ocrWorker && tick % 3 === 1) {
-        const c = walkFrame();
-        const { data } = await ocrWorker.recognize(c);
-        (data.words || []).forEach(w => {
-          const word = norm(w.text).replace(/[^a-z]/g, "");
-          if (word.length > 2 && GROCERY_SET.has(word) && w.confidence > 55) found.push({ name: PRETTY[word] || word, x: ((w.bbox.x0 + w.bbox.x1) / 2) / c.width });
-        });
-      }
-      announceWalk(found);
     } catch (_) {}
-    walkBusy = false;
+    announceWalk(found);
+  }
+  let walkGen = 0;
+  async function walkLoop(gen) {
+    while (walking && gen === walkGen) {
+      await walkStep();
+      await sleep(450);
+      await nextFrame();
+    }
   }
   function announceWalk(found) {
     if (!walking) return;
@@ -1053,16 +1083,18 @@ Reply with ONLY JSON:
     if (!stream) { const ok = await startCamera(); if (!ok) return; }
     walking = true; lastHeard = {}; stopAim();
     $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
-    status("busy", "Starting walk mode. Getting the on-phone AI ready, this takes a few seconds the first time.");
-    const ok = await loadWalkAI();
+    status("busy", "Starting walk mode. Loading the object finder, this takes a few seconds the first time.");
+    await loadDetector().catch(() => null);
     if (!walking) return;
-    if (!ok) { status("error", "Walk mode couldn't load its AI. Check your internet connection, then try again.", { retry: startWalk }); stopWalk(true); return; }
+    if (!detector) { status("error", "Walk mode couldn't load its AI. Check your internet connection, then try again.", { retry: startWalk }); stopWalk(true); return; }
     status("ok", "Walk mode on. Hold the phone upright at chest height and move slowly. I'll tell you what I can see, and when something is on your list.");
-    clearInterval(walkTimer); walkTimer = setInterval(walkStep, 700);
+    walkLoop(++walkGen);
+    // The scene model loads in the background and joins in when it's ready
+    loadClassifier().catch(() => null);
   }
   function stopWalk(silent) {
     const was = walking;
-    walking = false; clearInterval(walkTimer); walkTimer = null; drawBoxes([]); $("seeing").hidden = true;
+    walking = false; drawBoxes([]); $("seeing").hidden = true;
     $("walkBtn").setAttribute("aria-pressed", "false"); $("walkBtn").textContent = "🚶 Walk mode: tell me what I pass";
     if (stream) { setChip(); if (was) startAim(); }
     if (was && !silent) status("info", "Walk mode off.");
