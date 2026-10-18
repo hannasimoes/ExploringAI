@@ -1,0 +1,936 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GuideCart AI</title>
+<meta name="description" content="Voice-first shopping assistant for blind, low-vision and colour-blind shoppers.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Lexend:wght@500;700&display=swap">
+<meta name="theme-color" content="#005a9c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="GuideCart">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}img{max-width:100%}</style>
+</head>
+<body>
+<style>
+/* Layout: four screens (Home, My List, Shop, Settings) behind a bottom tab bar; camera is the centre of Shop.
+   Colour-blind safe palette (Okabe-Ito): blue for actions and "better value", orange for warnings - never red vs green.
+   Status is never colour-only: every state has an icon and a word. */
+:root {
+  --bg: #f6f8fb;
+  --surface: #ffffff;
+  --soft: #e4edf7;
+  --accent-mid: #5b8fc7;
+  --line: #cfd9e6;
+  --ink: #13233a;
+  --muted: #4a5b73;
+  --primary: #005a9c;
+  --primary-ink: #ffffff;
+  --alert: #a85600;
+  --alert-soft: #fdebd3;
+  --cam: #0b1422;
+  --display: "Lexend", "Trebuchet MS", system-ui, sans-serif;
+  --body: "Atkinson Hyperlegible", Verdana, system-ui, sans-serif;
+  --radius: 20px;
+  --scale: 1;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1522; --surface: #152033; --soft: #1e2c44; --accent-mid: #6fa8dc; --line: #2c3d58;
+    --ink: #eef3fa; --muted: #aab8cc; --primary: #56b4e9; --primary-ink: #0b1422;
+    --alert: #f0b43a; --alert-soft: #3b2c12; --cam: #060b14; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1522; --surface: #152033; --soft: #1e2c44; --accent-mid: #6fa8dc; --line: #2c3d58;
+    --ink: #eef3fa; --muted: #aab8cc; --primary: #56b4e9; --primary-ink: #0b1422;
+    --alert: #f0b43a; --alert-soft: #3b2c12; --cam: #060b14; color-scheme: dark;
+}
+/* High contrast override (light or dark) */
+:root.hc { --line: var(--ink); --muted: var(--ink); --soft: var(--surface); }
+:root.reduce * { animation: none !important; transition: none !important; }
+
+* { box-sizing: border-box; }
+html { font-size: calc(18px * var(--scale)); }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--body); line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px calc(110px + env(safe-area-inset-bottom, 0px));
+}
+.app { max-width: 560px; margin: 0 auto; }
+.screen { display: grid; gap: 18px; }
+h1 { font-family: var(--display); font-size: 1.7rem; line-height: 1.15; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--display); font-size: 1.15rem; margin: 0; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 700; color: var(--primary); }
+.brand svg { width: 30px; height: 30px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; display: grid; gap: 14px; }
+button, .btn {
+  font: inherit; font-weight: 700; font-size: 1.05rem;
+  min-height: 58px; width: 100%; border-radius: 16px;
+  border: 2px solid var(--line); background: var(--surface); color: var(--ink);
+  padding: 12px 16px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 10px; text-align: center;
+}
+.primary { background: var(--primary) !important; border-color: var(--primary) !important; color: var(--primary-ink) !important; min-height: 72px; font-size: 1.2rem; }
+.warn { border-color: var(--alert); color: var(--alert); }
+button:disabled { opacity: .55; cursor: wait; }
+button:focus-visible, input:focus-visible, select:focus-visible, .btn:focus-within { outline: 4px solid var(--alert); outline-offset: 3px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 360px) { .row2 { grid-template-columns: 1fr; } }
+
+/* Home */
+.hero { background: var(--primary); color: var(--primary-ink); border-radius: var(--radius); padding: 22px; display: grid; gap: 14px; }
+.hero h1 { color: var(--primary-ink); }
+.hero button { background: var(--primary-ink); color: var(--primary); border-color: var(--primary-ink); min-height: 68px; font-size: 1.2rem; }
+.progress { height: 12px; border-radius: 999px; background: var(--soft); overflow: hidden; border: 1px solid var(--line); }
+.progress span { display: block; height: 100%; background: var(--accent-mid); }
+
+/* List */
+form.add { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+form.add button { width: auto; min-width: 86px; }
+input[type=text], input[type=number], select {
+  font: inherit; font-size: 1.1rem; width: 100%; min-width: 0; min-height: 58px;
+  background: var(--bg); color: var(--ink); border: 2px solid var(--line); border-radius: 14px; padding: 10px 14px;
+}
+ul.items { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+ul.items li { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; background: var(--soft); border-radius: 14px; padding: 6px 6px 6px 8px; min-height: 60px; }
+ul.items .name { min-width: 0; overflow-wrap: anywhere; font-weight: 700; }
+ul.items li.done .name { text-decoration: line-through; color: var(--muted); font-weight: 400; }
+ul.items button { width: 48px; min-height: 48px; height: 48px; padding: 0; border-radius: 12px; border: 2px solid var(--line); background: var(--surface); }
+.state-label { font-size: .8rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.empty { text-align: center; padding: 18px; border: 2px dashed var(--line); border-radius: 14px; color: var(--muted); }
+.mic-note { font-size: .9rem; color: var(--muted); }
+
+/* Shop */
+.camera { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--cam); aspect-ratio: 4 / 5; max-width: 100%; }
+.camera video, .camera img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.camera .hint { position: absolute; inset: 0; display: grid; place-items: center; padding: 28px; text-align: center; color: #d9e6dc; }
+.frame { position: absolute; inset: 14%; border: 3px dashed rgba(86, 180, 233, .85); border-radius: 18px; pointer-events: none; }
+.chip { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); background: var(--surface); color: var(--ink); font-weight: 700; font-size: .85rem; padding: 4px 12px; border-radius: 999px; white-space: nowrap; }
+.file-btn { position: relative; }
+.file-btn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 58px; }
+.toggle input { width: 28px; height: 28px; accent-color: var(--primary); flex: none; }
+.status { display: flex; gap: 12px; align-items: flex-start; background: var(--soft); border-radius: 14px; padding: 12px 14px; min-height: 56px; }
+.status .ic { flex: none; font-size: 1.25rem; line-height: 1.4; }
+.status.error { background: var(--alert-soft); }
+.result { border: 2px solid var(--primary); border-radius: 16px; padding: 16px; display: grid; gap: 10px; }
+.result .what { font-family: var(--display); font-size: 1.25rem; font-weight: 700; overflow-wrap: anywhere; }
+.conf { display: inline-flex; align-items: center; gap: 6px; width: fit-content; font-weight: 700; font-size: .9rem; padding: 3px 10px; border-radius: 999px; background: var(--soft); }
+.conf.low { background: var(--alert-soft); color: var(--alert); }
+.compare { display: grid; gap: 12px; }
+.samples { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.samples button { min-height: 64px; font-size: .95rem; padding: 8px 10px; }
+@media (max-width: 360px) { .samples { grid-template-columns: 1fr; } }
+.label-card { border: 2px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 10px; }
+.label-card.best { border: 3px solid var(--primary); }
+.fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.fields label { display: grid; gap: 4px; font-size: .85rem; font-weight: 700; color: var(--muted); min-width: 0; }
+.verdict { font-family: var(--display); font-size: 1.1rem; font-weight: 700; }
+.badge { width: fit-content; display: inline-flex; gap: 6px; align-items: center; font-weight: 700; font-size: .85rem; padding: 3px 10px; border-radius: 999px; background: var(--primary); color: var(--primary-ink); }
+
+/* Settings */
+.setting { display: grid; gap: 6px; }
+.setting > span { font-weight: 700; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
+.seg button { min-height: 52px; font-size: .95rem; padding: 8px; }
+.seg button[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+
+/* Tabs */
+nav.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  background: var(--surface); border-top: 1px solid var(--line);
+  padding: 8px max(10px, env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
+}
+nav.tabs .in { max-width: 560px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+nav.tabs button { min-height: 62px; flex-direction: column; gap: 2px; font-size: .8rem; border: none; border-radius: 14px; background: transparent; color: var(--muted); padding: 6px 4px; }
+nav.tabs button .ti { font-size: 1.35rem; line-height: 1; }
+nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--primary); }
+
+/* Onboarding */
+.onb { display: grid; gap: 16px; padding-top: 12px; }
+.onb ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (prefers-reduced-motion: no-preference) { button:active { transform: scale(.98); } }
+</style>
+
+<div class="app">
+  <div id="live" class="sr" role="status" aria-live="polite"></div>
+
+  <!-- ONBOARDING -->
+  <section class="screen onb" id="s-onboarding" hidden aria-labelledby="onb-h">
+    <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="currentColor"/><path d="M8 11h2l2.4 9.2h9.2L24 13H12" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13.5" cy="24" r="1.6" fill="#fff"/><circle cx="20.5" cy="24" r="1.6" fill="#fff"/></svg>GuideCart AI</div>
+    <h1 id="onb-h">Shop with your list, read out by AI.</h1>
+    <div class="panel">
+      <h2>How it works</h2>
+      <ul>
+        <li>Write or dictate your shopping list.</li>
+        <li>Point the camera at a product or price label and tap Check.</li>
+        <li>GuideCart tells you what it thinks the product is, and asks you to confirm before ticking it off.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h2>Please know</h2>
+      <ul>
+        <li>The AI can be wrong. It always says how sure it is.</li>
+        <li>It does not guide you around the shop or warn about obstacles. Keep using your cane or guide dog.</li>
+        <li>Photos are sent to an AI service to be read and are not saved by this app.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h2>Using a screen reader?</h2>
+      <p class="muted">Choose how results are spoken. You can change this later in Settings.</p>
+      <div class="seg" role="group" aria-label="How results are spoken">
+        <button type="button" data-voice="app">App voice</button>
+        <button type="button" data-voice="sr">VoiceOver / TalkBack</button>
+      </div>
+    </div>
+    <button type="button" class="primary" id="onbDone">Get started</button>
+  </section>
+
+  <!-- HOME -->
+  <section class="screen" id="s-home" hidden aria-labelledby="home-h">
+    <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="currentColor"/><path d="M8 11h2l2.4 9.2h9.2L24 13H12" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13.5" cy="24" r="1.6" fill="#fff"/><circle cx="20.5" cy="24" r="1.6" fill="#fff"/></svg>GuideCart AI</div>
+    <div class="hero">
+      <h1 id="home-h">Ready to shop?</h1>
+      <p id="homeSummary">Your list is empty.</p>
+      <div class="progress" aria-hidden="true"><span id="homeBar" style="width:0%"></span></div>
+      <button type="button" data-go="shop">🛒 Start shopping</button>
+    </div>
+    <div class="row2">
+      <button type="button" data-go="list">✚ Create list</button>
+      <button type="button" data-go="list">☰ My list</button>
+    </div>
+    <button type="button" data-go="settings">⚙ Accessibility settings</button>
+  </section>
+
+  <!-- LIST -->
+  <section class="screen" id="s-list" hidden aria-labelledby="list-h">
+    <h1 id="list-h">My list</h1>
+    <div class="panel">
+      <form class="add" id="addForm">
+        <label for="itemInput" class="sr">Add items, separated by commas</label>
+        <input id="itemInput" type="text" placeholder="milk, eggs, pasta" autocomplete="off">
+        <button type="submit" class="primary" style="min-height:58px;font-size:1.05rem">Add</button>
+      </form>
+      <button type="button" id="micBtn">🎤 Dictate items</button>
+      <p class="mic-note" id="micNote">Tip: you can also use the microphone key on your keyboard.</p>
+    </div>
+    <div class="panel">
+      <h2 id="pendH">To get</h2>
+      <ul class="items" id="pendList" aria-labelledby="pendH"></ul>
+      <h2 id="doneH">Got it</h2>
+      <ul class="items" id="doneList" aria-labelledby="doneH"></ul>
+    </div>
+    <button type="button" class="primary" data-go="shop">🛒 Start shopping</button>
+  </section>
+
+  <!-- SHOP -->
+  <section class="screen" id="s-shop" hidden aria-labelledby="shop-h">
+    <h1 id="shop-h">Guided shopping</h1>
+    <div class="row2" role="group" aria-label="Mode">
+      <button type="button" id="modeFind" aria-pressed="true">🔍 Find product</button>
+      <button type="button" id="modeCompare" aria-pressed="false">⚖ Compare prices</button>
+    </div>
+    <div class="camera">
+      <video id="video" playsinline muted hidden></video>
+      <img id="preview" alt="" hidden>
+      <div class="frame" aria-hidden="true"></div>
+      <span class="chip" id="camChip" aria-hidden="true">Camera off</span>
+      <div class="hint" id="camHint">Hold the product about 30 cm from the phone, roughly the length of your forearm.</div>
+    </div>
+    <p class="muted" id="frameTip">Hold one product in your hand about 30 cm from the phone, or point at the price label on the front edge of the shelf. Keep still, then tap.</p>
+    <button type="button" class="primary" id="checkBtn">📷 Check product</button>
+    <div class="row2">
+      <button type="button" id="camBtn">▶ Live camera</button>
+      <label class="btn file-btn">🖼 Take photo<input id="photoInput" type="file" accept="image/*" capture="environment"></label>
+    </div>
+    <label class="toggle panel" style="padding:12px 16px" for="autoCheck" id="autoWrap" hidden>
+      <span><strong>Check automatically every 6 seconds</strong><br><span class="muted">Uses more battery and AI requests.</span></span>
+      <input type="checkbox" id="autoCheck">
+    </label>
+    <button type="button" id="tipsBtn">🔊 How to take a good photo</button>
+    <button type="button" id="sampleBtn" aria-expanded="false" aria-controls="samplePanel">🖼 Sample photos</button>
+    <div class="panel" id="samplePanel" hidden>
+      <h2 id="sampleH">Sample photos</h2>
+      <p class="muted" id="sampleNote"></p>
+      <div class="samples" id="sampleList" role="group" aria-labelledby="sampleH"></div>
+    </div>
+
+    <div class="status" id="statusBox"><span class="ic" id="statusIc" aria-hidden="true">💬</span><span id="statusText">Choose Find product or Compare prices, then tap Check.</span></div>
+    <button type="button" id="retryBtn" hidden>↻ Try again</button>
+
+    <div id="findResult"></div>
+
+    <div class="compare" id="compareArea" hidden>
+      <div class="label-card" id="cardA"></div>
+      <div class="label-card" id="cardB"></div>
+      <div class="panel" id="verdict" hidden></div>
+    </div>
+    <p class="muted" id="engineNote"></p>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="screen" id="s-settings" hidden aria-labelledby="set-h">
+    <h1 id="set-h">Accessibility settings</h1>
+    <div class="panel">
+      <div class="setting"><span id="l-voice">Spoken results</span>
+        <div class="seg" role="group" aria-labelledby="l-voice">
+          <button type="button" data-set="voice" data-val="app">App voice</button>
+          <button type="button" data-set="voice" data-val="sr">Screen reader</button>
+          <button type="button" data-set="voice" data-val="off">Off</button>
+        </div>
+        <p class="muted" style="font-size:.9rem">Pick "Screen reader" if you use VoiceOver or TalkBack, so you don't hear everything twice.</p>
+      </div>
+      <div class="setting"><span id="l-size">Text and button size</span>
+        <div class="seg" role="group" aria-labelledby="l-size">
+          <button type="button" data-set="size" data-val="1">Standard</button>
+          <button type="button" data-set="size" data-val="1.2">Large</button>
+          <button type="button" data-set="size" data-val="1.4">Extra large</button>
+        </div>
+      </div>
+      <div class="setting"><span id="l-theme">Theme</span>
+        <div class="seg" role="group" aria-labelledby="l-theme">
+          <button type="button" data-set="theme" data-val="system">Phone</button>
+          <button type="button" data-set="theme" data-val="light">Light</button>
+          <button type="button" data-set="theme" data-val="dark">Dark</button>
+        </div>
+      </div>
+      <div class="setting"><span id="l-contrast">Contrast</span>
+        <div class="seg" role="group" aria-labelledby="l-contrast">
+          <button type="button" data-set="contrast" data-val="standard">Standard</button>
+          <button type="button" data-set="contrast" data-val="high">High</button>
+        </div>
+      </div>
+      <div class="setting"><span id="l-motion">Motion</span>
+        <div class="seg" role="group" aria-labelledby="l-motion">
+          <button type="button" data-set="motion" data-val="normal">Normal</button>
+          <button type="button" data-set="motion" data-val="reduced">Reduced</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Preview</h2>
+      <div class="status"><span class="ic" aria-hidden="true">✓</span><span>Possibly whole milk, 1 litre. Fairly sure.</span></div>
+      <button type="button" id="testVoice">🔊 Test voice</button>
+      <p class="muted" id="voiceNote" style="font-size:.95rem">No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up.</p>
+    </div>
+    <button type="button" id="showOnb">Show introduction again</button>
+  </section>
+</div>
+
+<nav class="tabs" aria-label="Main">
+  <div class="in">
+    <button type="button" data-tab="home"><span class="ti" aria-hidden="true">⌂</span>Home</button>
+    <button type="button" data-tab="list"><span class="ti" aria-hidden="true">☰</span>My list</button>
+    <button type="button" data-tab="shop"><span class="ti" aria-hidden="true">🛒</span>Shop</button>
+    <button type="button" data-tab="settings"><span class="ti" aria-hidden="true">⚙</span>Settings</button>
+  </div>
+</nav>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const root = document.documentElement;
+
+  // ---------- Storage ----------
+  const load = (k, d) => { try { const v = localStorage.getItem("gc-" + k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
+  const keep = (k, v) => { try { localStorage.setItem("gc-" + k, JSON.stringify(v)); } catch (_) {} };
+
+  let items = load("items", [{ name: "milk", done: false }, { name: "eggs", done: false }, { name: "bananas", done: false }, { name: "carrots", done: false }]);
+  const settings = Object.assign({ voice: "app", size: "1", theme: "system", contrast: "standard", motion: "normal", onboarded: false }, load("settings", {}));
+
+  // ---------- Speech (M08: app voice, screen reader or off) ----------
+  let voice = null, lastSaid = "";
+  const pickVoice = () => { const vs = window.speechSynthesis ? speechSynthesis.getVoices() : []; voice = vs.find(v => /en[-_]GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null; };
+  if (window.speechSynthesis) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+  // echo = the name of a button just pressed. Echoes interrupt anything; a message that follows
+  // an echo waits for it to finish instead of cutting it off.
+  let echoSpeaking = false;
+  function say(text, { echo = false } = {}) {
+    if (!text) return;
+    if (!echo) lastSaid = text;
+    if (settings.voice === "sr") { if (!echo) { $("live").textContent = ""; setTimeout(() => { $("live").textContent = text; }, 60); } return; }
+    if (settings.voice === "off" || !window.speechSynthesis) return;
+    const talking = speechSynthesis.speaking || speechSynthesis.pending;
+    const interrupt = talking && (echo || !echoSpeaking);
+    const speakIt = () => {
+      try { speechSynthesis.resume(); } catch (_) {}
+      const u = new SpeechSynthesisUtterance(text); u.lang = "en-GB"; if (voice) u.voice = voice;
+      u.rate = echo ? 1.1 : 1; u.volume = 1;
+      echoSpeaking = echo;
+      u.onend = () => { if (echo) echoSpeaking = false; };
+      speechSynthesis.speak(u);
+    };
+    // iPhone Safari drops an utterance spoken right after cancel(), so wait a moment in that case only.
+    if (interrupt) { speechSynthesis.cancel(); setTimeout(speakIt, 150); } else speakIt();
+  }
+  // iPhone only allows speech after a tap: the first touch anywhere starts the voice silently.
+  let voiceUnlocked = false;
+  const unlockVoice = () => {
+    if (voiceUnlocked || !window.speechSynthesis) return;
+    voiceUnlocked = true;
+    try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch (_) {}
+    pickVoice();
+  };
+  document.addEventListener("touchstart", unlockVoice, { capture: true, passive: true });
+  document.addEventListener("pointerdown", unlockVoice, true);
+  // Read every button aloud when it is pressed (App voice mode; VoiceOver already does this itself)
+  const ch = (n) => String.fromCharCode(n);
+  const SYMBOLS = new RegExp("[" + ch(0x2190) + "-" + ch(0x2BFF) + ch(0xFE0F) + "]|[" + ch(0xD83C) + "-" + ch(0xD83E) + "][" + ch(0xDC00) + "-" + ch(0xDFFF) + "]", "g");
+  const clean = (s) => String(s || "").replace(SYMBOLS, "").replace(/\s+/g, " ").trim();
+  function controlName(el) {
+    let name = el.getAttribute("aria-label") || clean(el.innerText || el.textContent);
+    const group = el.closest("[role=group]");
+    const gl = group && (group.getAttribute("aria-label") || ($(group.getAttribute("aria-labelledby") || "") || {}).textContent);
+    if (gl && el.hasAttribute("aria-pressed")) name = `${clean(gl)}: ${name}`;
+    return name;
+  }
+  document.addEventListener("click", (e) => {
+    if (settings.voice !== "app") return;
+    const el = e.target.closest("button, label.btn");
+    if (!el || el.disabled) return;
+    if (el.matches("label.btn") && e.target.tagName === "INPUT") return;
+    say(controlName(el), { echo: true });
+  }, true);
+  document.addEventListener("focusin", (e) => {
+    if (settings.voice !== "app") return;
+    const t = e.target;
+    if (t.matches("input[type=text], input[type=number], select")) {
+      const lab = t.labels && t.labels[0] ? clean(t.labels[0].textContent) : (t.getAttribute("aria-label") || "");
+      say(`${lab}. Text field.${t.value ? " Contains " + t.value + "." : ""}`, { echo: true });
+    }
+  });
+  // Visual status + speech together (M09)
+  const ICONS = { info: "💬", busy: "⏳", ok: "✓", warn: "⚠", error: "✕" };
+  function status(kind, text, { speak = true, retry = null } = {}) {
+    $("statusIc").textContent = ICONS[kind] || "💬";
+    $("statusText").textContent = text;
+    $("statusBox").classList.toggle("error", kind === "error" || kind === "warn");
+    const rb = $("retryBtn"); rb.hidden = !retry; rb.onclick = retry;
+    if (speak) say(text);
+  }
+
+  // ---------- Settings ----------
+  function applySettings() {
+    root.style.setProperty("--scale", settings.size);
+    if (settings.theme === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", settings.theme);
+    root.classList.toggle("hc", settings.contrast === "high");
+    root.classList.toggle("reduce", settings.motion === "reduced");
+    document.querySelectorAll("[data-set]").forEach(b => b.setAttribute("aria-pressed", String(settings[b.dataset.set] === b.dataset.val)));
+    document.querySelectorAll("[data-voice]").forEach(b => b.setAttribute("aria-pressed", String(settings.voice === b.dataset.voice)));
+    keep("settings", settings);
+  }
+  document.querySelectorAll("[data-set]").forEach(b => b.addEventListener("click", () => {
+    settings[b.dataset.set] = b.dataset.val; applySettings();
+    if (b.dataset.set === "voice") say(b.dataset.val === "off" ? "" : "Spoken results set to " + b.textContent + ".");
+  }));
+  document.querySelectorAll("[data-voice]").forEach(b => b.addEventListener("click", () => { settings.voice = b.dataset.voice; applySettings(); }));
+  $("testVoice").onclick = () => {
+    const n = $("voiceNote");
+    if (!window.speechSynthesis) { n.textContent = "This viewer can't produce speech. Open GuideCart in Safari, or turn on VoiceOver and choose Screen reader above."; return; }
+    if (settings.voice !== "app") { n.textContent = `Spoken results are set to "${settings.voice === "sr" ? "Screen reader" : "Off"}". Choose App voice above to hear GuideCart's own voice.`; return; }
+    n.textContent = "No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up.";
+    say("Possibly whole milk, 1 litre. Fairly sure.");
+  };
+
+  // ---------- Navigation ----------
+  const SCREENS = ["onboarding", "home", "list", "shop", "settings"];
+  let current = "home";
+  function go(name) {
+    if (current === "shop" && name !== "shop") stopCamera(true);
+    current = name;
+    SCREENS.forEach(s => { $("s-" + s).hidden = s !== name; });
+    document.querySelector("nav.tabs").hidden = name === "onboarding";
+    document.querySelectorAll("[data-tab]").forEach(b => b.toggleAttribute("aria-current", false));
+    const t = document.querySelector(`[data-tab="${name}"]`); if (t) t.setAttribute("aria-current", "page");
+    if (name === "home") renderHome();
+    if (name === "list") renderList();
+    if (name === "shop") status("info", shopIntro());
+    const h = $("s-" + name).querySelector("h1"); if (h) { h.tabIndex = -1; h.focus({ preventScroll: true }); }
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click", () => go(b.dataset.tab)));
+  document.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => go(b.dataset.go)));
+  $("onbDone").onclick = () => { settings.onboarded = true; applySettings(); go("home"); say("Welcome to GuideCart."); };
+  $("showOnb").onclick = () => go("onboarding");
+
+  // ---------- List (M03) ----------
+  const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  const pending = () => items.filter(i => !i.done);
+  function saveItems() { keep("items", items); renderList(); renderHome(); }
+  function addItems(text) {
+    const parts = String(text).split(/,|\band\b/i).map(t => t.trim().toLowerCase()).filter(Boolean);
+    if (!parts.length) return;
+    parts.forEach(p => items.push({ name: p, done: false })); saveItems();
+    say(`Added ${parts.join(", ")}. ${pending().length} items to get.`);
+  }
+  function renderHome() {
+    const total = items.length, done = items.filter(i => i.done).length;
+    $("homeSummary").textContent = total ? `${done} of ${total} items picked up. ${total - done ? "Next: " + pending().slice(0, 3).map(i => i.name).join(", ") + "." : "All done!"}` : "Your list is empty. Create one to start.";
+    $("homeBar").style.width = total ? (100 * done / total) + "%" : "0%";
+  }
+  function itemRow(it) {
+    const li = document.createElement("li"); if (it.done) li.className = "done";
+    const st = document.createElement("span"); st.setAttribute("aria-hidden", "true"); st.textContent = it.done ? "✓" : "○"; st.style.fontSize = "1.3rem"; st.style.width = "28px"; st.style.textAlign = "center";
+    const nm = document.createElement("span"); nm.className = "name"; nm.textContent = it.name;
+    const sl = document.createElement("span"); sl.className = "sr"; sl.textContent = it.done ? ", picked up" : ", to get"; nm.append(sl);
+    const acts = document.createElement("div"); acts.style.display = "flex"; acts.style.gap = "6px";
+    const tog = document.createElement("button"); tog.type = "button"; tog.textContent = it.done ? "↩" : "✓";
+    tog.setAttribute("aria-label", it.done ? `Move ${it.name} back to To get` : `Mark ${it.name} as picked up`);
+    tog.onclick = () => { it.done = !it.done; saveItems(); say(it.done ? `${cap(it.name)} picked up.` : `${cap(it.name)} moved back to your list.`); };
+    const ed = document.createElement("button"); ed.type = "button"; ed.textContent = "✎"; ed.setAttribute("aria-label", "Edit " + it.name);
+    ed.onclick = () => startEdit(li, it);
+    const del = document.createElement("button"); del.type = "button"; del.textContent = "✕"; del.setAttribute("aria-label", "Remove " + it.name);
+    del.onclick = () => { items = items.filter(x => x !== it); saveItems(); say(`${cap(it.name)} removed.`); };
+    acts.append(tog, ed, del); li.append(st, nm, acts); return li;
+  }
+  function startEdit(li, it) {
+    li.innerHTML = "";
+    const f = document.createElement("form"); f.className = "add"; f.style.gridColumn = "1 / -1";
+    const inp = document.createElement("input"); inp.type = "text"; inp.value = it.name; inp.setAttribute("aria-label", "Edit item name");
+    const ok = document.createElement("button"); ok.type = "submit"; ok.textContent = "Save";
+    f.append(inp, ok); li.append(f); inp.focus();
+    f.onsubmit = (e) => { e.preventDefault(); const v = inp.value.trim().toLowerCase(); if (v) { it.name = v; say(`Changed to ${v}.`); } saveItems(); };
+  }
+  function renderList() {
+    const pl = $("pendList"), dl = $("doneList"); pl.innerHTML = ""; dl.innerHTML = "";
+    const p = items.filter(i => !i.done), d = items.filter(i => i.done);
+    if (!p.length) { const e = document.createElement("li"); e.className = "empty"; e.style.display = "block"; e.textContent = items.length ? "Everything is picked up." : "No items yet. Add some above."; pl.append(e); }
+    p.forEach(i => pl.append(itemRow(i))); d.forEach(i => dl.append(itemRow(i)));
+    $("doneH").hidden = !d.length;
+  }
+  $("addForm").addEventListener("submit", (e) => { e.preventDefault(); addItems($("itemInput").value); $("itemInput").value = ""; });
+
+  // Dictation where the browser supports it; otherwise point to keyboard mic (M03 fallback)
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  $("micBtn").onclick = () => {
+    if (!SR) { $("micNote").textContent = "Dictation isn't available here. Tap the text box and use the microphone key on your keyboard."; say($("micNote").textContent); $("itemInput").focus(); return; }
+    let rec; try { rec = new SR(); } catch (_) { rec = null; }
+    if (!rec) { $("micNote").textContent = "Dictation isn't available here. Use the keyboard microphone instead."; say($("micNote").textContent); return; }
+    rec.lang = "en-GB"; rec.interimResults = false;
+    $("micBtn").textContent = "🎤 Listening… say items with commas"; say("Listening.");
+    rec.onresult = (e) => addItems(e.results[0][0].transcript);
+    rec.onerror = () => { $("micNote").textContent = "I couldn't hear that. Try again, or type your items."; say($("micNote").textContent); };
+    rec.onend = () => { $("micBtn").textContent = "🎤 Dictate items"; };
+    try { rec.start(); } catch (_) { rec.onerror(); }
+  };
+
+  // ---------- AI service (M05) ----------
+  // Inside Claude: Claude Vision via the artifact's sample capability (real recognition).
+  // Own website: on-device OCR (Tesseract.js) reads real text from the photo.
+  let sample = null, claudeVision = false;
+  (async () => {
+    try {
+      if (window.claude && claude.use) {
+        sample = await claude.use("sample");
+        const lim = sample && await sample.limits().catch(() => null);
+        claudeVision = !!(lim && lim.images);
+      }
+    } catch (_) {}
+    $("engineNote").textContent = claudeVision ? "AI service: Claude Vision. Photos are not stored by GuideCart." : "AI service: on-phone text reading (Tesseract). Photos never leave your phone.";
+  })();
+  const scripts = {};
+  const loadScript = (src) => scripts[src] || (scripts[src] = new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => { delete scripts[src]; rej(new Error("network")); }; document.head.append(s); }));
+  async function ocrText(canvas) {
+    await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js");
+    const { data } = await Tesseract.recognize(canvas, "eng");
+    return (data.text || "").replace(/\s+/g, " ").trim();
+  }
+  const toBlob = (c) => new Promise(r => c.toBlob(r, "image/jpeg", 0.88));
+
+  async function identify(canvas) {
+    const list = pending().map(i => i.name);
+    if (claudeVision) {
+      const prompt =
+`You are the vision part of an app for BLIND shoppers. The image is from their phone camera in a supermarket. The user cannot see the screen or the product, so never ask them to look at anything.
+Shopping list: ${JSON.stringify(list)}.
+Identify the single main product in view. Do not guess beyond what is visible.
+If you cannot identify a product, say plainly what the image shows instead (e.g. "a blurry shelf", "the floor", "a hand covering the lens", "the back of a box with only a barcode").
+"guidance" must be one short instruction a blind person can follow by touch and movement only: distances in centimetres, "turn the product a quarter turn", "move the phone up/left", "hold the product in your other hand", "hold still for two seconds". Use null if nothing is needed.
+Reply with ONLY JSON:
+{"readable": true|false, "seen": "what the image actually shows, in a few words", "product": "short product description, e.g. whole milk, or null", "brand": "brand or null", "size": "pack size as printed, e.g. 1 L, or null", "confidence": "high|medium|low", "list_match": "the matching item from the list, or null", "why_unsure": "short reason if confidence is not high, else null", "guidance": "touch-based instruction or null"}`;
+      return await sample.json(prompt, { images: await toBlob(canvas), modelTier: "default", cache: false });
+    }
+    const text = await ocrText(canvas);
+    if (text.length < 3) return { readable: false, seen: "no printed words", guidance: TURN_TIP };
+    const match = list.find(i => norm(text).includes(norm(i))) || null;
+    const size = (text.match(/\d+(?:[.,]\d+)?\s?(?:kg|g|ml|l|litre|litres|pints?)\b/i) || [null])[0];
+    return { readable: true, product: match ? match : text.slice(0, 60), brand: null, size, confidence: match ? "medium" : "low", list_match: match, why_unsure: "Read from the printed text only." };
+  }
+  async function readLabel(canvas) {
+    if (claudeVision) {
+      const prompt =
+`The image is from a BLIND shopper's phone, aimed at a supermarket shelf-edge price label or product packaging. They cannot see the screen.
+Read the product name, the price in pounds, and the pack quantity with its unit. If a metric size is printed (for example 2.272L or 375g) use it rather than pints. For packs sold by number (for example "5 per pack" or "12 per pack") use that number with unit "each". Ignore promotions, star ratings and "per item"/"per litre" figures; read the main price.
+If no price label is readable, say plainly what the image shows instead, and give one instruction they can follow by touch and movement only. Shelf-edge labels sit on the front edge of the shelf, directly under the product; tell them, for example, to "run your fingers along the front edge of the shelf under the product and point the phone there, about 20 cm away".
+Reply with ONLY JSON:
+{"readable": true|false, "seen": "what the image actually shows, in a few words", "product": "name or null", "price": number or null, "quantity": number or null, "unit": "g|kg|ml|l|each or null", "guidance": "touch-based instruction or null"}`;
+      return await sample.json(prompt, { images: await toBlob(canvas), modelTier: "default", cache: false });
+    }
+    const text = await ocrText(canvas);
+    const pm = text.match(/£\s?(\d+(?:[.,]\d{1,2})?)/) || text.match(/(\d+[.,]\d{2})/);
+    const qm = text.match(/(\d+(?:[.,]\d+)?)\s?(kg|g|ml|l)\b/i);
+    if (!pm && !qm) return { readable: false, seen: text ? "some text, but no price" : "no printed words", guidance: SHELF_TIP };
+    return { readable: true, product: text.slice(0, 40), price: pm ? parseFloat(pm[1].replace(",", ".")) : null,
+      quantity: qm ? parseFloat(qm[1].replace(",", ".")) : null, unit: qm ? qm[2].toLowerCase() : null };
+  }
+
+  // ---------- Unit-price maths (M07, A04) ----------
+  const UNIT = { g: ["mass", 0.001], kg: ["mass", 1], ml: ["vol", 0.001], l: ["vol", 1], each: ["count", 1] };
+  function perUnit(price, qty, unit) {
+    const u = UNIT[String(unit || "").toLowerCase()];
+    if (!u || !(price > 0) || !(qty > 0)) return null;
+    const base = qty * u[1];
+    return { dim: u[0], value: price / base, label: u[0] === "mass" ? "kg" : u[0] === "vol" ? "litre" : "item" };
+  }
+  function compareTwo(a, b) {
+    const pa = perUnit(a.price, a.quantity, a.unit), pb = perUnit(b.price, b.quantity, b.unit);
+    if (!pa || !pb) return { ok: false, reason: "missing" };
+    if (pa.dim !== pb.dim) return { ok: false, reason: "units" };
+    const cheaper = pa.value < pb.value ? "A" : pb.value < pa.value ? "B" : "same";
+    return { ok: true, pa, pb, cheaper, saving: Math.abs(pa.value - pb.value) };
+  }
+  const money = (n) => "£" + n.toFixed(2);
+
+  // ---------- Camera (M04) ----------
+  let stream = null, autoTimer = null;
+  const video = $("video"), preview = $("preview");
+  async function startCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { noLiveCamera("no-api"); return false; }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 } }, audio: false });
+    } catch (e) { noLiveCamera(e && e.name === "NotAllowedError" ? "denied" : "blocked"); return false; }
+    video.srcObject = stream; video.hidden = false; preview.hidden = true; $("camHint").hidden = true;
+    await video.play().catch(() => {});
+    $("camChip").textContent = "● Live"; $("camBtn").textContent = "■ Stop camera"; $("autoWrap").hidden = false;
+    status("ok", "Camera on. The camera is on the back of the phone, at the top. " + (mode === "find" ? "Hold the product about 30 centimetres in front of it and tap Check product." : "Point it at the price label, about 20 centimetres away, and tap Read price label."));
+    return true;
+  }
+  function noLiveCamera(why) {
+    $("camChip").textContent = "Photo mode";
+    const msg = why === "denied" ? "Camera permission was refused. Allow the camera in your browser settings, or use Take photo."
+      : "The live camera isn't available here. Use Take photo instead. It works the same way.";
+    status("warn", msg);
+  }
+  function stopCamera(silent) {
+    clearInterval(autoTimer); autoTimer = null; $("autoCheck").checked = false;
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    video.hidden = true; $("autoWrap").hidden = true; $("camBtn").textContent = "▶ Live camera"; $("camChip").textContent = "Camera off";
+    if (preview.hidden) $("camHint").hidden = false;
+    if (!silent) status("info", "Camera off.");
+  }
+  $("camBtn").onclick = () => stream ? stopCamera(false) : startCamera();
+  $("autoCheck").onchange = (e) => {
+    clearInterval(autoTimer); autoTimer = null;
+    if (e.target.checked) { autoTimer = setInterval(() => { if (!busy && stream && !awaitingConfirm) runCheck(); }, 6000); say("Automatic checking on."); }
+    else say("Automatic checking off.");
+  };
+  function grab() {
+    const c = document.createElement("canvas"); c.width = video.videoWidth; c.height = video.videoHeight;
+    c.getContext("2d").drawImage(video, 0, 0); return c;
+  }
+  $("checkBtn").onclick = () => {
+    if (stream && video.videoWidth) runCheck();
+    else $("photoInput").click();
+  };
+  $("photoInput").addEventListener("change", async () => {
+    const f = $("photoInput").files && $("photoInput").files[0]; if (!f) return;
+    if (stream) stopCamera(true);
+    const url = URL.createObjectURL(f);
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; }).catch(() => null);
+    $("photoInput").value = "";
+    if (!img) { status("error", "That photo couldn't be opened. Try taking it again.", { retry: () => $("photoInput").click() }); return; }
+    showPreview(url);
+    const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight; c.getContext("2d").drawImage(img, 0, 0);
+    runCheck(c);
+  });
+  function showPreview(url) { preview.src = url; preview.hidden = false; video.hidden = true; $("camHint").hidden = true; $("camChip").textContent = "Photo"; }
+
+  // Sample photos: real images drawn in code and read by the real AI service (never a canned answer)
+  function canvasOf(w, h, bg) { const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d"); g.fillStyle = bg; g.fillRect(0, 0, w, h); return [c, g]; }
+  function drawPack(s) {
+    const [c, g] = canvasOf(800, 1000, "#cdd5de");
+    g.fillStyle = s.colour; g.fillRect(170, 90, 460, 640); g.strokeStyle = "#333"; g.lineWidth = 4; g.strokeRect(170, 90, 460, 640);
+    g.fillStyle = s.ink || "#13233a"; g.textAlign = "center";
+    g.font = "bold 30px Verdana"; g.fillText(s.brand || "VALUE FOODS", 400, 170);
+    g.font = "bold 60px Verdana"; s.name.split("|").forEach((ln, i) => g.fillText(ln, 400, 320 + i * 72));
+    g.font = "46px Verdana"; g.fillText(s.size, 400, 560);
+    g.fillStyle = "#ffffff"; g.fillRect(200, 790, 400, 170); g.strokeStyle = "#333"; g.strokeRect(200, 790, 400, 170);
+    g.fillStyle = "#111"; g.font = "32px Verdana"; g.fillText(s.name.replace("|", " ") + " " + s.size, 400, 840);
+    g.font = "bold 72px Verdana"; g.fillText("£" + s.price, 400, 930);
+    return c;
+  }
+  function drawLabel(s) {
+    const [c, g] = canvasOf(1000, 700, "#9aa6b4");
+    g.fillStyle = "#6e7b8b"; g.fillRect(0, 0, 1000, 160);
+    g.fillStyle = "#ffffff"; g.fillRect(120, 200, 760, 380); g.strokeStyle = "#222"; g.lineWidth = 4; g.strokeRect(120, 200, 760, 380);
+    g.fillStyle = "#111"; g.textAlign = "left"; g.font = "bold 44px Verdana"; g.fillText(s.name, 160, 280);
+    g.font = "38px Verdana"; g.fillText(s.size, 160, 340);
+    g.font = "bold 120px Verdana"; g.fillText("£" + s.price, 160, 500);
+    g.font = "26px Verdana"; g.textAlign = "right"; g.fillText(s.unitText, 850, 550);
+    return c;
+  }
+  function drawBack() {
+    const [c, g] = canvasOf(800, 1000, "#cdd5de");
+    g.fillStyle = "#f2efe6"; g.fillRect(170, 90, 460, 820); g.strokeStyle = "#333"; g.lineWidth = 4; g.strokeRect(170, 90, 460, 820);
+    g.fillStyle = "#111"; for (let x = 260, i = 0; x < 540; i++) { const w = [3, 6, 2, 8, 4][i % 5]; g.fillRect(x, 640, w, 160); x += w + [4, 3, 6, 2][i % 4]; }
+    return c;
+  }
+  // Real product photos (cropped from supermarket listings) shipped next to the page in samples/
+  function photo(src) {
+    return new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => { const c = document.createElement("canvas"); c.width = i.naturalWidth; c.height = i.naturalHeight; c.getContext("2d").drawImage(i, 0, 0); res(c); };
+      i.onerror = () => rej(new Error("sample"));
+      i.src = "samples/" + src;
+    });
+  }
+  async function blurred(src) {
+    const p = await photo(src); const [c, g] = canvasOf(p.width, p.height, "#eceff3");
+    try { g.filter = "blur(14px)"; } catch (_) {}
+    g.drawImage(p, 0, 0);
+    if (g.filter !== "blur(14px)") { for (let k = 0; k < 14; k++) { g.globalAlpha = 0.12; g.drawImage(p, (k - 7) * 5, (k % 3 - 1) * 5); } g.globalAlpha = 1; }
+    return c;
+  }
+  const P = (label, file) => ({ label, make: () => photo(file + ".jpg") });
+  const FIND_SAMPLES = [
+    P("Semi-skimmed milk", "semi-milk-4pt"), P("Whole milk", "whole-milk-4pt"), P("Cravendale milk 2 L", "cravendale-2l"),
+    P("Free range eggs", "eggs"), P("Bananas", "bananas-ocado"), P("Organic bananas", "bananas-organic"),
+    P("Carrots", "carrots"), P("Broccoli", "broccoli"), P("Chopped tomatoes", "chopped-tomatoes"),
+    P("Cucumber", "cucumber"), P("Easy peelers", "easy-peelers"), P("Red onions", "red-onions"),
+    P("Brown onions", "brown-onions"), P("Pink Lady apples", "pink-lady"),
+    { label: "Back of a box", make: async () => drawBack() },
+    { label: "Blurry photo", make: () => blurred("semi-milk-2pt.jpg"), check: true },
+  ];
+  const C = (label, file) => ({ label, make: () => photo(file + "-label.jpg") });
+  const COMPARE_SAMPLES = [
+    C("Semi-skimmed milk 4 pints, £1.65", "semi-milk-4pt"), C("Semi-skimmed milk 2 pints, £1.20", "semi-milk-2pt"),
+    C("Whole milk 4 pints, £1.65", "whole-milk-4pt"), C("Cravendale milk 2 L, £2.65", "cravendale-2l"),
+    C("Bananas, 5 pack, £0.95", "bananas-ocado"), C("Fyffes bananas, 5 pack, £0.78", "bananas-fyffes"),
+    C("Organic bananas, 5 pack, £1.60", "bananas-organic"), C("Carrots 1 kg, £0.69", "carrots"),
+    C("Broccoli 375 g, £0.90", "broccoli"), C("Chopped tomatoes 400 g, £0.47", "chopped-tomatoes"),
+    C("Easy peelers 600 g, £2.60", "easy-peelers"), C("Free range eggs, 12, £3.35", "eggs"),
+    C("Pink Lady apples, 4 pack, £2.75", "pink-lady"), C("Red onions, 3 pack, £1.00", "red-onions"),
+  ];
+  function renderSamples() {
+    const list = $("sampleList"); list.innerHTML = "";
+    $("sampleNote").textContent = mode === "find"
+      ? "Real product photos. The AI reads each one live, with no pre-written answers."
+      : "Real product listings with price and size. Pick one for label A, then one for label B, for example the two semi-skimmed milks.";
+    (mode === "find" ? FIND_SAMPLES : COMPARE_SAMPLES).forEach(s => {
+      const b = document.createElement("button"); b.type = "button"; b.textContent = s.label;
+      b.onclick = async () => {
+        if (stream) stopCamera(true);
+        let c;
+        try { c = await s.make(); } catch (_) { status("error", "That sample photo couldn't be loaded. Try another one."); return; }
+        showPreview(c.toDataURL("image/jpeg", 0.9)); runCheck(c, !s.check);
+      };
+      list.append(b);
+    });
+  }
+  $("sampleBtn").onclick = () => {
+    const p = $("samplePanel"); p.hidden = !p.hidden; $("sampleBtn").setAttribute("aria-expanded", String(!p.hidden));
+    if (!p.hidden) { renderSamples(); say(`${mode === "find" ? FIND_SAMPLES.length + " sample products" : COMPARE_SAMPLES.length + " sample price labels"} listed below.`); }
+  };
+  $("tipsBtn").onclick = () => say(mode === "find" ? TURN_TIP : SHELF_TIP);
+
+  // ---------- Find mode (M05, M06) ----------
+  let mode = "find", busy = false, awaitingConfirm = false;
+  function shopIntro() {
+    return mode === "find"
+      ? `Guided shopping, find product. Hold one product in your hand, about 30 centimetres from the phone, roughly the length of your forearm. Then tap Check product, the large button in the middle of the screen. ${pending().length ? "Still to get: " + pending().map(i => i.name).join(", ") + "." : ""}`
+      : "Guided shopping, compare prices. Feel along the front edge of the shelf, just under the product, to find the price label. Hold the phone about 20 centimetres in front of it, then tap Read price label.";
+  }
+  function setMode(m) {
+    mode = m; $("modeFind").setAttribute("aria-pressed", String(m === "find")); $("modeCompare").setAttribute("aria-pressed", String(m === "compare"));
+    $("checkBtn").textContent = m === "find" ? "📷 Check product" : "📷 Read price label";
+    $("findResult").hidden = m !== "find"; $("compareArea").hidden = m !== "compare";
+    if (!$("samplePanel").hidden) renderSamples();
+    if (m === "compare") { renderCompare(); status("info", nextLabel() ? `Point at price label ${nextLabel()} and tap Read price label.` : "Both labels read. Confirm each one to compare."); }
+    else status("info", "Hold a product about 30 centimetres from the phone and tap Check product.");
+  }
+  $("modeFind").onclick = () => setMode("find");
+  $("modeCompare").onclick = () => setMode("compare");
+
+  function setBusy(b) { busy = b; $("checkBtn").disabled = b; $("sampleList").querySelectorAll("button").forEach(x => x.disabled = b); }
+  function errorFor(e) {
+    const code = e && e.code;
+    if (code === "rate_limited") return "Too many checks in a short time. Wait a minute, then try again.";
+    if (code === "not_granted" || code === "sampling_disabled") return "The AI service isn't allowed for this page. Allow it when asked, then try again.";
+    if (code === "session_expired") return "You've been signed out. Sign in again, then try again.";
+    if (e && e.message === "network" && window.claude && !claudeVision) return "The AI photo reader isn't switched on in this view. Close and reopen GuideCart and choose Allow when it asks to use Claude, or open it on the claude.ai website.";
+    if (e && e.message === "network") return "No internet connection. Check your signal, then try again.";
+    return "The AI service didn't answer. Try again in a moment.";
+  }
+  async function runCheck(canvas, isSample) {
+    if (busy) return;
+    const c = canvas || (stream && video.videoWidth ? grab() : null);
+    if (!c) { $("photoInput").click(); return; }
+    if (mode === "find" && !pending().length) { status("warn", "Your list has nothing left to find. Add items in My list."); return; }
+    const q = isSample ? null : imageQuality(c);
+    if (q) { status("warn", q, { retry: () => runCheck() }); return; }
+    setBusy(true);
+    status("busy", mode === "find" ? "Checking the product…" : "Reading the price label…");
+    try {
+      if (mode === "find") showMatch(await identify(c));
+      else storeLabel(await readLabel(c));
+    } catch (e) {
+      status("error", errorFor(e), { retry: () => runCheck(c) });
+    } finally { setBusy(false); }
+  }
+  // Touch-based tips: a blind user can't see the frame or the label, so every tip uses distance, turning and hand position.
+  const TURN_TIP = "Hold the product in one hand, about 30 centimetres from the phone, roughly the length of your forearm. Turn the product slowly a quarter turn at a time and tap Check after each turn.";
+  const SHELF_TIP = "Run your fingers along the front edge of the shelf, just under the product, to find the price label. Hold the phone about 20 centimetres in front of that spot and tap Read price label.";
+  // Quick on-phone check before using the AI: too dark or too blurry
+  function imageQuality(canvas) {
+    try {
+      const w = 160, h = Math.max(1, Math.round(160 * canvas.height / canvas.width));
+      const s = document.createElement("canvas"); s.width = w; s.height = h;
+      const g = s.getContext("2d"); g.drawImage(canvas, 0, 0, w, h);
+      const d = g.getImageData(0, 0, w, h).data, L = new Float32Array(w * h);
+      let sum = 0;
+      for (let i = 0; i < w * h; i++) { const v = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; L[i] = v; sum += v; }
+      const mean = sum / (w * h);
+      if (mean < 35) return "The photo is too dark, as if something is covering the camera. Check your fingers aren't over the lens at the top of the phone, then try again.";
+      if (mean > 245) return "The photo is almost completely white, probably from a bright light or a shiny surface. Tilt the phone slightly downwards and try again.";
+      let lap = 0, n = 0;
+      for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x, v = 4 * L[i] - L[i - 1] - L[i + 1] - L[i - w] - L[i + w]; lap += v * v; n++;
+      }
+      if (lap / n < 8) return "The photo is blurry. Hold the phone with both hands, rest your elbows against your body, and keep still for two seconds before tapping.";
+    } catch (_) {}
+    return null;
+  }
+  const CONF = { high: ["✓", "Fairly sure"], medium: ["~", "Not completely sure"], low: ["?", "Not sure"] };
+  function showMatch(r) {
+    const box = $("findResult"); box.innerHTML = "";
+    if (!r || !r.readable || !r.product) {
+      const seen = r && r.seen && r.seen !== "null" ? `I can't identify a product. I can see ${r.seen}. ` : "I can't identify a product. ";
+      const tip = r && r.guidance && r.guidance !== "null" ? r.guidance : TURN_TIP;
+      status("warn", seen + tip, { retry: () => runCheck() });
+      return;
+    }
+    const conf = CONF[r.confidence] || CONF.low;
+    const desc = [r.brand, r.product, r.size].filter(x => x && x !== "null").join(", ");
+    const match = r.list_match && pending().find(i => norm(i.name) === norm(r.list_match) || norm(r.list_match).includes(norm(i.name)) || norm(i.name).includes(norm(r.list_match)));
+    const card = document.createElement("div"); card.className = "result";
+    card.innerHTML = `<span class="conf ${r.confidence === "high" ? "" : "low"}"><span aria-hidden="true">${conf[0]}</span> ${conf[1]}</span><div class="what"></div><p class="muted why"></p>`;
+    card.querySelector(".what").textContent = "Possibly " + desc;
+    card.querySelector(".why").textContent = r.why_unsure && r.why_unsure !== "null" ? r.why_unsure : "";
+    let spoken = `Possibly ${desc}. ${conf[1]}.`;
+    if (r.confidence !== "high" && r.guidance && r.guidance !== "null") spoken += " " + r.guidance;
+    if (match) {
+      const q = document.createElement("p"); q.style.fontWeight = "700"; q.textContent = `Is this the ${match.name} on your list?`;
+      const row = document.createElement("div"); row.className = "row2";
+      const yes = document.createElement("button"); yes.type = "button"; yes.className = "primary"; yes.textContent = "✓ Yes, tick it off";
+      const no = document.createElement("button"); no.type = "button"; no.className = "warn"; no.textContent = "✕ No";
+      yes.onclick = () => { match.done = true; saveItems(); awaitingConfirm = false; box.innerHTML = ""; status("ok", `${cap(match.name)} ticked off. ${pending().length ? pending().length + " left: " + pending().map(i => i.name).join(", ") + "." : "Your list is complete!"}`); };
+      no.onclick = () => { awaitingConfirm = false; box.innerHTML = ""; status("info", "OK, not ticked off. Point at the next product and tap Check."); };
+      row.append(yes, no); card.append(q, row);
+      spoken += ` Is this the ${match.name} on your list?`;
+      awaitingConfirm = true;
+    } else {
+      const p = document.createElement("p"); p.textContent = "This doesn't seem to be on your list.";
+      card.append(p); spoken += " This doesn't seem to be on your list.";
+    }
+    box.append(card);
+    status(match ? "ok" : "info", spoken);
+    const first = card.querySelector("button"); if (first && settings.voice === "sr") first.focus();
+  }
+
+  // ---------- Compare mode (M07) ----------
+  let labels = { A: null, B: null };
+  const nextLabel = () => !labels.A ? "A" : !labels.B ? "B" : null;
+  function storeLabel(r) {
+    const slot = nextLabel() || "B";
+    if (!r || !r.readable) {
+      const seen = r && r.seen && r.seen !== "null" ? `I can see ${r.seen}, but no price I can read. ` : "I couldn't read a price. ";
+      status("warn", `Label ${slot}: ${seen}${r && r.guidance && r.guidance !== "null" ? r.guidance : SHELF_TIP}`, { retry: () => runCheck() });
+      return;
+    }
+    labels[slot] = { product: r.product || "", price: num(r.price), quantity: num(r.quantity), unit: UNIT[String(r.unit || "").toLowerCase()] ? String(r.unit).toLowerCase() : "", confirmed: false };
+    renderCompare();
+    const L = labels[slot];
+    status("ok", `Label ${slot}: ${L.product || "product"}, ${L.price != null ? money(L.price) : "price not read"}, ${L.quantity != null && L.unit ? L.quantity + " " + L.unit : "size not read"}. If that's right, tap Confirm values. If not, tap Read again, or change the numbers.`);
+  }
+  const num = (v) => { const n = parseFloat(v); return isFinite(n) ? n : null; };
+  function renderCompare(speakVerdict) {
+    ["A", "B"].forEach(s => {
+      const card = $("card" + s), L = labels[s]; card.innerHTML = ""; card.classList.remove("best");
+      const h = document.createElement("h2"); h.textContent = "Label " + s; card.append(h);
+      if (!L) { const p = document.createElement("p"); p.className = "muted"; p.textContent = nextLabel() === s ? "Next: point at this label and tap Read price label." : "Waiting."; card.append(p); return; }
+      const name = document.createElement("p"); name.style.fontWeight = "700"; name.textContent = L.product || "Product"; card.append(name);
+      const f = document.createElement("div"); f.className = "fields";
+      f.append(field(`Price (£)`, "number", L.price, v => L.price = num(v), "0.01"),
+               field("Quantity", "number", L.quantity, v => L.quantity = num(v), "any"),
+               unitField(L));
+      card.append(f);
+      const row = document.createElement("div"); row.className = "row2";
+      const ok = document.createElement("button"); ok.type = "button"; ok.className = L.confirmed ? "" : "primary"; ok.style.minHeight = "56px"; ok.style.fontSize = "1rem";
+      ok.textContent = L.confirmed ? "✓ Confirmed" : "Confirm values";
+      ok.onclick = () => { L.confirmed = true; renderCompare(true); if (!(labels.A && labels.B && labels.A.confirmed && labels.B.confirmed)) say(`Label ${s} confirmed.`); };
+      const re = document.createElement("button"); re.type = "button"; re.style.minHeight = "56px"; re.style.fontSize = "1rem"; re.textContent = "↻ Read again";
+      re.onclick = () => { labels[s] = null; if (s === "A" && labels.B) { labels.A = labels.B; labels.B = null; } renderCompare(); status("info", `Point at label ${nextLabel()} and tap Read price label.`); };
+      row.append(ok, re); card.append(row);
+    });
+    finishCompare(!speakVerdict);
+  }
+  function field(lbl, type, val, onIn, step) {
+    const l = document.createElement("label"); l.textContent = lbl;
+    const i = document.createElement("input"); i.type = type; i.inputMode = "decimal"; i.step = step; i.value = val == null ? "" : val;
+    i.oninput = () => { onIn(i.value); markUnconfirmed(); };
+    l.append(i); return l;
+  }
+  function unitField(L) {
+    const l = document.createElement("label"); l.textContent = "Unit";
+    const s = document.createElement("select");
+    [["", "—"], ["g", "g"], ["kg", "kg"], ["ml", "ml"], ["l", "L"], ["each", "each"]].forEach(([v, t]) => { const o = document.createElement("option"); o.value = v; o.textContent = t; if (L.unit === v) o.selected = true; s.append(o); });
+    s.onchange = () => { L.unit = s.value; markUnconfirmed(); };
+    l.append(s); return l;
+  }
+  function markUnconfirmed() { ["A", "B"].forEach(s => { if (labels[s]) labels[s].confirmed = false; }); $("verdict").hidden = true; }
+  function finishCompare(quiet) {
+    const v = $("verdict"), A = labels.A, B = labels.B;
+    if (!A || !B || !A.confirmed || !B.confirmed) { v.hidden = true; return; }
+    const r = compareTwo(A, B); v.hidden = false; v.innerHTML = "";
+    const h = document.createElement("p"); h.className = "verdict";
+    let text;
+    if (!r.ok) text = r.reason === "units" ? "Comparison not available: one is sold by weight and the other by volume or by item." : "Comparison not available: a price or quantity is missing.";
+    else if (r.cheaper === "same") text = `Both cost the same: ${money(r.pa.value)} per ${r.pa.label}.`;
+    else {
+      const win = r.cheaper === "A" ? A : B, wl = r.cheaper, wp = r.cheaper === "A" ? r.pa : r.pb, lp = r.cheaper === "A" ? r.pb : r.pa;
+      $("card" + wl).classList.add("best");
+      text = `Label ${wl}, ${win.product || ""}, is better value: ${money(wp.value)} per ${wp.label}, against ${money(lp.value)}. You save ${money(r.saving)} per ${wp.label}.`;
+      const b = document.createElement("span"); b.className = "badge"; b.textContent = "★ Better value"; $("card" + wl).prepend(b);
+    }
+    h.textContent = text; v.append(h);
+    const again = document.createElement("button"); again.type = "button"; again.textContent = "Compare two new labels";
+    again.onclick = () => { labels = { A: null, B: null }; renderCompare(); status("info", "Point at price label A and tap Read price label."); };
+    v.append(again);
+    status(r.ok ? "ok" : "warn", text, { speak: !quiet });
+  }
+
+  // ---------- Start ----------
+  applySettings();
+  renderList(); renderHome(); renderCompare();
+  go(settings.onboarded ? "home" : "onboarding");
+  // Exposed for the arithmetic test (A04)
+  window.GuideCartMath = { perUnit, compareTwo };
+})();
+</script>
+
+</body>
+</html>
