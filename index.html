@@ -1118,10 +1118,12 @@ Reply with ONLY JSON:
       const words = lines.filter(l => (l.match(/[A-Za-z]{3,}/g) || []).length).slice(0, 3).join(". ");
       if (!words || words.length < 4) return;
       const key = norm(words).slice(0, 40);
-      if (heardText[key] && Date.now() - heardText[key] < 15000) return;
+      if (heardText[key] && Date.now() - heardText[key] < 30000) return;
+      if (window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending) && !pending().find(i => norm(words).includes(stem(i.name)))) return;
       heardText[key] = Date.now();
       const listItem = pending().find(i => norm(words).includes(stem(i.name)));
-      const msg = `${cap(label)} ${where}. It says: ${words}.${listItem ? ` That's the ${listItem.name} on your list!` : ""}`;
+      const firstLine = words.split(". ")[0].split(" ").slice(0, 6).join(" ");
+      const msg = listItem ? `${cap(listItem.name)}, ${short((x + w / 2) / W)}. On your list.` : `${cap(firstLine)}, ${short((x + w / 2) / W)}.`;
       $("statusIc").textContent = listItem ? "★" : "🏷"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
       if (listItem) { try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {} }
       if (settings.voice === "sr") { $("live").textContent = msg; return; }
@@ -1165,6 +1167,8 @@ Reply with ONLY JSON:
       await nextFrame();
     }
   }
+  const short = (x) => x < 0.36 ? "left" : x > 0.64 ? "right" : "ahead";
+  const bare = (n) => String(n).replace(/^(a|an|the) /, "");
   function announceWalk(found) {
     if (!walking) return;
     // Always show everything the AI sees right now, even when it isn't spoken
@@ -1174,19 +1178,19 @@ Reply with ONLY JSON:
     if (!found.length) return;
     const now = Date.now(), seenNow = {};
     found.forEach(f => { if (!seenNow[f.name]) seenNow[f.name] = f; });
-    const fresh = Object.values(seenNow).filter(f => !lastHeard[f.name] || now - lastHeard[f.name] > 8000);
+    const fresh = Object.values(seenNow).filter(f => !lastHeard[f.name] || now - lastHeard[f.name] > 20000);
     if (!fresh.length) return;
     const listed = fresh.filter(f => onList(f.name)), others = fresh.filter(f => !onList(f.name));
     const talking = window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending);
     if (!listed.length && talking) return; // don't pile up chatter
-    fresh.forEach(f => { lastHeard[f.name] = now; });
-    const parts = listed.map(f => `${cap(f.name)}, ${side(f.x)}. That's on your list!`);
-    const close = others.filter(f => f.near && !f.scene), placed = others.filter(f => !f.near && !f.scene).slice(0, 3);
-    const scene = others.filter(f => f.scene && !placed.some(p => p.name.replace(/^an? /, "") === f.name)).slice(0, 2);
-    close.forEach(f => parts.push(`${cap(f.name)} very close, ${side(f.x)}.`));
-    if (placed.length) parts.push("You're passing " + placed.map(f => `${f.name} ${side(f.x)}`).join(", ") + ".");
-    if (scene.length) parts.push("Also nearby: " + scene.map(f => (/^(a|an|the) /.test(f.name) || /s$/.test(f.name) ? f.name : (/^[aeiou]/i.test(f.name) ? "an " : "a ") + f.name)).join(" and ") + ".");
-    const msg = parts.join(" ");
+    // Priority: list items, then anything very close, then up to two other things. Scene guesses only when nothing else.
+    const close = others.filter(f => f.near && !f.scene), placed = others.filter(f => !f.near && !f.scene), scene = others.filter(f => f.scene);
+    const pick = [...listed, ...close, ...placed, ...(listed.length || close.length || placed.length ? [] : scene)].slice(0, 2);
+    if (!pick.length) return;
+    pick.forEach(f => { lastHeard[f.name] = now; });
+    const msg = pick.map(f => listed.includes(f) ? `${cap(bare(f.name))}, ${short(f.x)}. On your list.`
+      : close.includes(f) ? `Careful, ${bare(f.name)} close ${short(f.x) === "ahead" ? "ahead" : "on the " + short(f.x)}.`
+      : f.scene ? `${cap(bare(f.name))}.` : `${cap(bare(f.name))}, ${short(f.x)}.`).join(" ");
     $("statusIc").textContent = listed.length ? "★" : "🚶";
     $("statusText").textContent = msg;
     $("statusBox").classList.remove("error");
@@ -1214,7 +1218,7 @@ Reply with ONLY JSON:
 `You are the eyes of a BLIND person walking with their phone camera held at chest height. This is the current camera view.
 Their shopping list: ${JSON.stringify(list)}.
 Previously you said: ${JSON.stringify(lastScene || "nothing yet")}.
-Say what they are passing now, in one or two short spoken sentences: the main objects, people or obstacles with their position (on your left, ahead, on your right), and read any large printed text such as signs or product names. Mention anything on their list first. Warn about anything very close ahead. Do not repeat what you already said unless it matters. Only describe what you can clearly see.
+Be brief, like a sighted friend whispering. At most 8 words, in the form "Chair, left. Person, ahead." Name at most two things, each with left, ahead or right. Put anything on their list first ("Milk, right. On your list."). Start with "Careful," for anything very close ahead. Read a sign or product name only if it is large and useful, in 3 words or fewer. If nothing has changed since what you said before, return an empty string. Only describe what you can clearly see.
 JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "names", "of", "things", "in", "view"], "on_list": "list item seen, or null"}`, c, { fast: true });
           if (!walking || gen !== walkGen) return;
           const seeing = Array.isArray(r.seeing) ? r.seeing.slice(0, 8) : [];
@@ -1231,7 +1235,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
       } catch (e) {
         if (e && e.code === "bad_key") { status("error", "The Claude API key was refused. Check it in Settings, under Smarter AI."); stopWalk(true); return; }
       }
-      await sleep(Math.max(600, 3000 - (Date.now() - t0)));
+      await sleep(Math.max(800, 3500 - (Date.now() - t0)));
     }
   }
   async function startWalk() {
@@ -1239,7 +1243,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     if (apiKey && !claudeVision) {
       walking = true; lastHeard = {}; lastScene = ""; stopAim();
       $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
-      status("ok", "Walk mode on, using Claude Vision. Hold the phone upright at chest height and move slowly. I'll tell you what you're passing.");
+      status("ok", "Walk mode on, with Claude Vision. Hold the phone at chest height and walk slowly.");
       claudeWalkLoop(++walkGen);
       return;
     }
@@ -1249,7 +1253,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     await loadDetector().catch(() => null);
     if (!walking) return;
     if (!detector) { status("error", "Walk mode couldn't load its AI. Check your internet connection, then try again.", { retry: startWalk }); stopWalk(true); return; }
-    status("ok", "Walk mode on. Hold the phone upright at chest height and move slowly. I'll tell you what I can see, and when something is on your list.");
+    status("ok", "Walk mode on. Hold the phone at chest height and walk slowly.");
     walkLoop(++walkGen);
     // The scene model (filtered to everyday things) and the label reader join in when ready
     loadClassifier().catch(() => null);
