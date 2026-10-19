@@ -147,6 +147,14 @@ ul.items button { width: 48px; min-height: 48px; height: 48px; padding: 0; borde
 .readout .sum { font-family: var(--display); font-size: 1.15rem; font-weight: 700; }
 .readout ul { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; }
 .readout .full { white-space: pre-wrap; background: var(--bg); border-radius: 12px; padding: 12px; max-height: 40vh; overflow: auto; font-size: .95rem; }
+.assist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.assist li { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; background: var(--soft); border-radius: 14px; padding: 12px 14px; }
+.assist li .ic { font-size: 1.2rem; line-height: 1.4; }
+.assist li .tx { min-width: 0; display: grid; gap: 8px; }
+.assist li button, .notice button { min-height: 48px; font-size: .95rem; padding: 8px 12px; width: auto; }
+.assist li .acts, .notice .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.notice { display: grid; gap: 10px; border: 3px solid var(--alert); background: var(--alert-soft); border-radius: 16px; padding: 14px 16px; font-weight: 700; }
+.tipline { display: flex; gap: 8px; align-items: flex-start; background: var(--alert-soft); border-radius: 12px; padding: 10px 12px; font-weight: 700; }
 .label-card { border: 2px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 10px; }
 .label-card.best { border: 3px solid var(--primary); }
 .fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
@@ -226,6 +234,11 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <button type="button" data-go="list">✚ Create list</button>
       <button type="button" data-go="list">☰ My list</button>
     </div>
+    <div class="panel" aria-labelledby="assistH">
+      <h2 id="assistH">💡 Your assistant</h2>
+      <p class="muted" style="font-size:.95rem">Learns from what you buy: price changes, habits and things you may not need.</p>
+      <ul class="assist" id="assistList"></ul>
+    </div>
     <button type="button" data-go="settings">⚙ Accessibility settings</button>
   </section>
 
@@ -241,6 +254,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <button type="button" id="micBtn">🎤 Dictate items</button>
       <p class="mic-note" id="micNote">Tip: you can also use the microphone key on your keyboard.</p>
     </div>
+    <div class="notice" id="listNotice" role="alert" hidden></div>
     <div class="panel">
       <h2 id="pendH">To get</h2>
       <ul class="items" id="pendList" aria-labelledby="pendH"></ul>
@@ -345,6 +359,14 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <div class="status"><span class="ic" aria-hidden="true">✓</span><span>This is whole milk, 1 litre.</span></div>
       <button type="button" id="testVoice">🔊 Test voice</button>
       <p class="muted" id="voiceNote" style="font-size:.95rem">No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up.</p>
+    </div>
+    <div class="panel">
+      <h2>Shopping history</h2>
+      <p class="muted" style="font-size:.95rem" id="histNote"></p>
+      <div class="row2">
+        <button type="button" id="histClear">Clear history</button>
+        <button type="button" id="histSample">Load sample history</button>
+      </div>
     </div>
     <div class="panel">
       <h2 id="apiH">Smarter AI (optional)</h2>
@@ -498,6 +520,8 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   document.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => go(b.dataset.go)));
   $("onbDone").onclick = () => { settings.onboarded = true; applySettings(); go("home"); say("Welcome to GuideCart."); };
   $("showOnb").onclick = () => go("onboarding");
+  $("histClear").onclick = () => { purchases = []; keep("history", purchases); renderHistNote(); renderHome(); say("History cleared."); };
+  $("histSample").onclick = () => { purchases = seedHistory().concat(purchases.filter(p => !p.sample)); keep("history", purchases); renderHistNote(); renderHome(); say("Sample history loaded."); };
   function apiStatus() {
     $("apiNote").textContent = apiKey ? "Claude Vision is on. Key ending in " + apiKey.slice(-4) + "." : (claudeVision ? "Claude Vision is already on inside Claude. A key is only needed on the website." : "No key saved. GuideCart uses the smaller on-phone AI.");
     $("engineNote").textContent = claudeVision ? "AI service: Claude Vision. Photos are not stored by GuideCart." : apiKey ? "AI service: Claude Vision (your API key). Photos are not stored by GuideCart." : "AI service: on-phone AI. Photos never leave your phone.";
@@ -520,12 +544,124 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const parts = String(text).split(/,|\band\b/i).map(t => t.trim().toLowerCase()).filter(Boolean);
     if (!parts.length) return;
     parts.forEach(p => items.push({ name: p, done: false })); saveItems();
-    say(`Added ${parts.join(", ")}.`);
+    say(`Added ${parts.join(", ")}.` + checkNewItems(parts));
+  }
+  // ---------- Assistant memory: learns from what you buy ----------
+  const DAY = 864e5;
+  const pence = (n) => n < 1 ? Math.round(n * 100) + "p" : "£" + n.toFixed(2);
+  const ago = (d) => d <= 0 ? "today" : d === 1 ? "yesterday" : d < 7 ? d + " days ago" : d < 14 ? "last week" : Math.round(d / 7) + " weeks ago";
+  const daysAgo = (ts) => Math.floor((Date.now() - ts) / DAY);
+  function seedHistory() {
+    const d = (n) => Date.now() - n * DAY - 3600e3;
+    const e = (name, price, n) => ({ name, price, date: d(n), sample: true });
+    return [
+      e("semi-skimmed milk", 1.55, 7), e("semi-skimmed milk", 1.45, 14), e("semi-skimmed milk", 1.45, 21),
+      e("free range eggs", 3.35, 3), e("free range eggs", 3.20, 17),
+      e("wholemeal bread", 1.25, 7), e("wholemeal bread", 1.25, 14), e("wholemeal bread", 1.20, 21),
+      e("bananas", 0.95, 6), e("bananas", 1.05, 13),
+      e("cucumber", 0.99, 2),
+      e("salted butter", 1.85, 11), e("salted butter", 1.75, 25),
+      e("red onions", 1.00, 9),
+    ];
+  }
+  let purchases = load("history", null);
+  if (!Array.isArray(purchases)) { purchases = seedHistory(); keep("history", purchases); }
+  const GENERIC = new Set("semi skimmed whole free range large small salted unsalted british fresh organic red brown white green seedless wild washed ocado premium pack pints pint litre litres the a of".split(" "));
+  const core = (name) => norm(name).replace(/[^a-z ]/g, " ").split(/\s+/).filter(w => w.length > 2 && !GENERIC.has(w)).map(w => w.replace(/(es|s)$/, ""));
+  function historyFor(name) {
+    const k = core(name); if (!k.length) return [];
+    return purchases.filter(p => core(p.name).some(w => k.includes(w))).sort((a, b) => b.date - a.date);
+  }
+  // What the assistant knows about this product: when it was last bought, and how the price compares
+  function insightFor(name, price) {
+    const h = historyFor(name); if (!h.length) return null;
+    const last = h[0], days = daysAgo(last.date), out = { last, days, parts: [], spoken: [] };
+    if (price != null && last.price != null) {
+      const diff = Math.round((price - last.price) * 100) / 100;
+      if (Math.abs(diff) >= 0.05) {
+        out.up = diff > 0;
+        out.parts.push(diff > 0 ? `${pence(diff)} more than ${ago(days)} (${money(last.price)}).` : `${pence(-diff)} cheaper than ${ago(days)} (${money(last.price)}).`);
+        out.spoken.push(diff > 0 ? `${pence(diff)} more than ${ago(days)}.` : `${pence(-diff)} cheaper than ${ago(days)}.`);
+      } else { out.parts.push(`Same price as ${ago(days)}.`); }
+    }
+    if (days <= 4) { out.recent = true; out.parts.push(`You bought it ${ago(days)}.`); out.spoken.push(`You bought it ${ago(days)}.`); }
+    else if (!out.parts.length) out.parts.push(`Last bought ${ago(days)}${last.price != null ? " for " + money(last.price) : ""}.`);
+    return out;
+  }
+  function recordPurchase(name, price) {
+    purchases.unshift({ name: String(name).toLowerCase(), price: price != null && isFinite(price) ? price : null, date: Date.now() });
+    if (purchases.length > 300) purchases.length = 300;
+    keep("history", purchases); renderHome(); renderHistNote();
+  }
+  // Group purchases by product to spot habits and price trends
+  function groups() {
+    const g = {};
+    purchases.forEach(p => { const k = core(p.name).join(" "); if (k) (g[k] = g[k] || []).push(p); });
+    return Object.values(g).map(list => list.sort((a, b) => b.date - a.date));
+  }
+  function assistantTips() {
+    const tips = [], onList = (n) => pending().find(i => core(i.name).some(w => core(n).includes(w)));
+    groups().forEach(list => {
+      const last = list[0], name = last.name, days = daysAgo(last.date);
+      const priced = list.filter(p => p.price != null);
+      const listed = onList(name);
+      if (listed && days <= 4) tips.push({ ic: "⚠", text: `You bought ${name} ${ago(days)}. Still need the ${listed.name} on your list?`, act: "Remove from list", run: () => { items = items.filter(x => x !== listed); saveItems(); say(`${cap(listed.name)} removed.`); } });
+      if (list.length >= 2) {
+        const gaps = []; for (let i = 0; i < list.length - 1; i++) gaps.push((list[i].date - list[i + 1].date) / DAY);
+        const every = Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length);
+        if (!listed && every >= 3 && days >= every - 1) tips.push({ ic: "🔁", text: `You usually buy ${name} every ${every === 7 ? "week" : every + " days"}. Last time was ${ago(days)}.`, act: "Add to list", run: () => { items_add(name); saveItems(); say(`Added ${name}.`); } });
+      }
+      if (priced.length >= 2 && Math.abs(priced[0].price - priced[1].price) >= 0.05) {
+        const diff = priced[0].price - priced[1].price;
+        tips.push({ ic: diff > 0 ? "📈" : "📉", text: `${cap(name)} ${diff > 0 ? "went up" : "went down"} ${pence(Math.abs(diff))}: ${money(priced[0].price)} ${ago(daysAgo(priced[0].date))}, ${money(priced[1].price)} before.` });
+      }
+    });
+    const order = { "⚠": 0, "🔁": 1, "📈": 2, "📉": 3 };
+    return tips.sort((a, b) => order[a.ic] - order[b.ic]).slice(0, 6);
+  }
+  function renderAssist() {
+    const ul = $("assistList"); if (!ul) return; ul.innerHTML = "";
+    const tips = assistantTips();
+    if (!tips.length) { const li = document.createElement("li"); li.innerHTML = '<span class="ic" aria-hidden="true">🛒</span><span class="tx">Tick items off as you shop and I\'ll start spotting patterns.</span>'; ul.append(li); return; }
+    tips.forEach(tp => {
+      const li = document.createElement("li");
+      const ic = document.createElement("span"); ic.className = "ic"; ic.setAttribute("aria-hidden", "true"); ic.textContent = tp.ic;
+      const tx = document.createElement("div"); tx.className = "tx";
+      const p = document.createElement("span"); p.textContent = tp.text; tx.append(p);
+      if (tp.act) { const a = document.createElement("div"); a.className = "acts"; const b = document.createElement("button"); b.type = "button"; b.textContent = tp.act; b.onclick = tp.run; a.append(b); tx.append(a); }
+      li.append(ic, tx); ul.append(li);
+    });
+  }
+  // When something just added was bought very recently, ask whether to keep it
+  function checkNewItems(names) {
+    const box = $("listNotice");
+    for (const n of names) {
+      const ins = insightFor(n, null);
+      if (ins && ins.recent) {
+        const it = items.slice().reverse().find(i => i.name === n && !i.done);
+        if (!it) continue;
+        box.hidden = false; box.innerHTML = "";
+        const p = document.createElement("span"); p.textContent = `💡 You bought ${ins.last.name} ${ago(ins.days)}. Keep it on your list?`;
+        const a = document.createElement("div"); a.className = "acts";
+        const keepB = document.createElement("button"); keepB.type = "button"; keepB.className = "primary"; keepB.textContent = "Keep";
+        const rem = document.createElement("button"); rem.type = "button"; rem.textContent = "Remove";
+        keepB.onclick = () => { box.hidden = true; say("Kept."); };
+        rem.onclick = () => { items = items.filter(x => x !== it); saveItems(); box.hidden = true; say(`${cap(n)} removed.`); };
+        a.append(keepB, rem); box.append(p, a);
+        return ` You bought ${n} ${ago(ins.days)}. Keep it?`;
+      }
+    }
+    box.hidden = true; return "";
+  }
+  function renderHistNote() {
+    const n = purchases.length, s = purchases.some(p => p.sample);
+    const el = $("histNote"); if (el) el.textContent = `${n} purchase${n === 1 ? "" : "s"} remembered${s ? ", including sample history for the demo" : ""}. GuideCart uses this to spot price changes and habits. It stays on this phone.`;
   }
   function renderHome() {
     const total = items.length, done = items.filter(i => i.done).length;
     $("homeSummary").textContent = total ? `${done} of ${total} items picked up. ${total - done ? "Next: " + pending().slice(0, 3).map(i => i.name).join(", ") + "." : "All done!"}` : "Your list is empty. Create one to start.";
     $("homeBar").style.width = total ? (100 * done / total) + "%" : "0%";
+    renderAssist();
   }
   function itemRow(it) {
     const li = document.createElement("li"); if (it.done) li.className = "done";
@@ -623,7 +759,8 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
         said.forEach(p => items_add(p));
         saveItems();
         $("micNote").textContent = "Added: " + said.join(", ") + ".";
-        setTimeout(() => say(`Added ${said.join(", ")}.`), 300);
+        const extra = checkNewItems(said);
+        setTimeout(() => say(`Added ${said.join(", ")}.` + extra), 300);
       } else if ($("micNote").textContent.indexOf("Dictation") !== 0 && $("micNote").textContent.indexOf("Microphone") !== 0 && $("micNote").textContent.indexOf("I didn't") !== 0) {
         $("micNote").textContent = "I didn't catch any items. Try again, or type them.";
         setTimeout(() => say($("micNote").textContent), 300);
@@ -744,7 +881,7 @@ Confidence: "high" when the product name is clearly printed or the item is unmis
 If you cannot identify a product, say plainly what the image shows instead (e.g. "a blurry shelf", "the floor", "a hand covering the lens", "the back of a box with only a barcode").
 "guidance" is one instruction of at most 6 words a blind person can follow by touch or movement, e.g. "Turn it a quarter turn." Use null if nothing is needed.
 Reply with ONLY JSON:
-{"readable": true|false, "seen": "what the image actually shows, in a few words", "product": "2 to 4 word product name, e.g. whole milk, or null", "brand": "brand or null", "size": "pack size as printed, e.g. 1 L, or null", "confidence": "high|medium|low", "list_match": "the matching item from the list, or null", "why_unsure": "short reason if confidence is not high, else null", "guidance": "touch-based instruction or null"}`;
+{"readable": true|false, "seen": "what the image actually shows, in a few words", "product": "2 to 4 word product name, e.g. whole milk, or null", "brand": "brand or null", "size": "pack size as printed, e.g. 1 L, or null", "price": "the product's price in pounds as a number if a price is visible (shelf label, sticker or listing), else null", "confidence": "high|medium|low", "list_match": "the matching item from the list, or null", "why_unsure": "short reason if confidence is not high, else null", "guidance": "touch-based instruction or null"}`;
       return await visionJSON(prompt, canvas);
     }
     // On-phone fallback: combine object detection with printed words, and only report real grocery words
@@ -1501,19 +1638,27 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     card.querySelector(".why").textContent = r.why_unsure && r.why_unsure !== "null" ? r.why_unsure : "";
     let spoken = (LEAD[r.confidence] || LEAD.low)(desc);
     if (r.confidence === "low" && r.guidance && r.guidance !== "null") spoken += " " + r.guidance;
+    const priceNow = num(r.price);
+    const ins = insightFor(match ? match.name : r.product, priceNow);
+    if (ins && ins.parts.length) {
+      const tl = document.createElement("div"); tl.className = "tipline";
+      const ic = document.createElement("span"); ic.setAttribute("aria-hidden", "true"); ic.textContent = ins.up ? "📈" : "💡";
+      const tx = document.createElement("span"); tx.textContent = (priceNow != null ? `Now ${money(priceNow)}. ` : "") + ins.parts.join(" ");
+      tl.append(ic, tx); card.append(tl);
+    }
     if (match) {
-      const q = document.createElement("p"); q.style.fontWeight = "700"; q.textContent = `Is this the ${match.name} on your list?`;
+      const q = document.createElement("p"); q.style.fontWeight = "700"; q.textContent = ins && (ins.up || ins.recent) ? `Still want the ${match.name}?` : `Is this the ${match.name} on your list?`;
       const row = document.createElement("div"); row.className = "row2";
       const yes = document.createElement("button"); yes.type = "button"; yes.className = "primary"; yes.textContent = "✓ Yes, tick it off";
       const no = document.createElement("button"); no.type = "button"; no.className = "warn"; no.textContent = "✕ No";
-      yes.onclick = () => { match.done = true; saveItems(); awaitingConfirm = false; box.innerHTML = ""; status("ok", `${cap(match.name)} ticked off.${pending().length ? "" : " List complete!"}`); };
+      yes.onclick = () => { match.done = true; saveItems(); recordPurchase(r.product || match.name, priceNow); awaitingConfirm = false; box.innerHTML = ""; status("ok", `${cap(match.name)} ticked off.${pending().length ? "" : " List complete!"}`); };
       no.onclick = () => { awaitingConfirm = false; box.innerHTML = ""; status("info", "Not ticked."); };
       row.append(yes, no); card.append(q, row);
-      spoken += ` Your ${match.name}?`;
+      spoken += ins && ins.spoken.length ? ` ${ins.spoken.join(" ")} Keep it?` : ` Your ${match.name}?`;
       awaitingConfirm = true;
     } else {
       const p = document.createElement("p"); p.textContent = "This doesn't seem to be on your list.";
-      card.append(p); spoken += " Not on your list.";
+      card.append(p); spoken += " Not on your list." + (ins && ins.spoken.length ? " " + ins.spoken.join(" ") : "");
     }
     box.append(card);
     status(match ? "ok" : "info", spoken);
@@ -1594,7 +1739,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
 
   // ---------- Start ----------
   applySettings();
-  renderList(); renderHome(); renderCompare();
+  renderList(); renderHome(); renderCompare(); renderHistNote();
   go(settings.onboarded ? "home" : "onboarding");
   // Exposed for the arithmetic test (A04)
   window.GuideCartMath = { perUnit, compareTwo };
