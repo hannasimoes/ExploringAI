@@ -538,13 +538,25 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
   const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
   const pending = () => items.filter(i => !i.done);
-  const items_add = (name) => { const n = String(name).trim().toLowerCase(); if (n) items.push({ name: n, done: false }); };
+  // Returns "added", "back" (was ticked, now back on the list) or "dup" (already on the list)
+  const items_add = (name) => {
+    const n = String(name).trim().toLowerCase(); if (!n) return "dup";
+    const same = items.find(i => norm(i.name) === norm(n));
+    if (same && !same.done) return "dup";
+    if (same) { same.done = false; return "back"; }
+    items.push({ name: n, done: false }); return "added";
+  };
+  function addedPhrase(names) {
+    const res = names.map(n => [n, items_add(n)]);
+    const added = res.filter(r => r[1] !== "dup").map(r => r[0]), dup = res.filter(r => r[1] === "dup").map(r => r[0]);
+    return { added, text: (added.length ? `Added ${added.join(", ")}.` : "") + (dup.length ? ` ${cap(dup.join(", "))} already on your list.` : "") };
+  }
   function saveItems() { keep("items", items); renderList(); renderHome(); }
   function addItems(text) {
     const parts = String(text).split(/,|\band\b/i).map(t => t.trim().toLowerCase()).filter(Boolean);
     if (!parts.length) return;
-    parts.forEach(p => items.push({ name: p, done: false })); saveItems();
-    say(`Added ${parts.join(", ")}.` + checkNewItems(parts));
+    const r = addedPhrase(parts); saveItems();
+    say(r.text.trim() + checkNewItems(r.added));
   }
   // ---------- Assistant memory: learns from what you buy ----------
   const DAY = 864e5;
@@ -609,7 +621,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       if (list.length >= 2) {
         const gaps = []; for (let i = 0; i < list.length - 1; i++) gaps.push((list[i].date - list[i + 1].date) / DAY);
         const every = Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length);
-        if (!listed && every >= 3 && days >= every - 1) tips.push({ ic: "🔁", text: `You usually buy ${name} every ${every === 7 ? "week" : every + " days"}. Last time was ${ago(days)}.`, act: "Add to list", run: () => { items_add(name); saveItems(); say(`Added ${name}.`); } });
+        if (!listed && every >= 3 && days >= every - 1) tips.push({ ic: "🔁", text: `You usually buy ${name} every ${every === 7 ? "week" : every + " days"}. Last time was ${ago(days)}.`, act: "Add to list", run: () => { const r = addedPhrase([name]); saveItems(); say(r.text.trim()); } });
       }
       if (priced.length >= 2 && Math.abs(priced[0].price - priced[1].price) >= 0.05) {
         const diff = priced[0].price - priced[1].price;
@@ -756,11 +768,11 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       const said = splitSpoken(heard); heard = "";
       $("itemInput").value = "";
       if (said.length) {
-        said.forEach(p => items_add(p));
+        const r = addedPhrase(said);
         saveItems();
-        $("micNote").textContent = "Added: " + said.join(", ") + ".";
-        const extra = checkNewItems(said);
-        setTimeout(() => say(`Added ${said.join(", ")}.` + extra), 300);
+        $("micNote").textContent = r.text.trim();
+        const extra = checkNewItems(r.added);
+        setTimeout(() => say(r.text.trim() + extra), 300);
       } else if ($("micNote").textContent.indexOf("Dictation") !== 0 && $("micNote").textContent.indexOf("Microphone") !== 0 && $("micNote").textContent.indexOf("I didn't") !== 0) {
         $("micNote").textContent = "I didn't catch any items. Try again, or type them.";
         setTimeout(() => say($("micNote").textContent), 300);
@@ -861,6 +873,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     }).catch(() => { throw new Error("network"); });
     if (res.status === 401) throw { code: "bad_key" };
     if (res.status === 429) throw { code: "rate_limited" };
+    if (res.status === 400) { const body = await res.text().catch(() => ""); if (/credit/i.test(body)) throw { code: "no_credit" }; }
     if (!res.ok) throw { code: "upstream_error" };
     const data = await res.json();
     return parseJSON((data.content || []).map(c => c.text || "").join(""));
@@ -937,8 +950,6 @@ Reply with ONLY JSON:
     const lines = await ocrLines(canvas), text = lines.join("\n");
     if (text.replace(/[^A-Za-z]/g, "").length < 4) return { readable: false, seen: "no printed words", guidance: "Hold the phone about 30 centimetres from the text, straight in front of it, and keep still." };
     return { readable: true, kind: "other", summary: `I can read ${lines.length} line${lines.length > 1 ? "s" : ""} of text.`, items: [], full_text: text };
-    const items = (text.match(/[A-Za-z][^£\n]{2,40}£\s?\d+(?:\.\d{2})?/g) || []).slice(0, 12).map(s => { const m = s.match(/^(.*?)£\s?(\d+(?:\.\d{2})?)$/); return { name: m ? m[1].trim() : s, price: m ? "£" + m[2] : null, detail: null }; });
-    return { readable: true, kind: "other", summary: items.length ? `I found ${items.length} prices.` : "Here is the text I could read.", items, full_text: text };
   }
   let readingText = "";
   function showReading(r) {
@@ -1025,7 +1036,7 @@ Reply with ONLY JSON:
     if (viaGlasses) { chip.textContent = (walking ? "🕶 Walk mode" : "🕶 Ray-Ban Meta"); const s = document.createElement("span"); s.className = "glasses-tag"; s.textContent = "preview"; chip.append(s); }
   }
   function stopCamera(silent) {
-    hush();
+    if (stream || walking) hush();
     stopWalk(true); stopAim(); viaGlasses = false; $("aimBtn").hidden = true;
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     video.hidden = true; $("camBtn").textContent = "▶ Live camera"; $("camChip").textContent = "Camera off";
@@ -1369,7 +1380,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
           }
         }
       } catch (e) {
-        if (e && e.code === "bad_key") { status("error", "The Claude API key was refused. Check it in Settings, under Smarter AI."); stopWalk(true); return; }
+        if (e && (e.code === "bad_key" || e.code === "no_credit")) { status("error", errorFor(e)); stopWalk(true); return; }
       }
       await sleep(Math.max(800, 3500 - (Date.now() - t0)));
     }
@@ -1574,6 +1585,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     if (code === "rate_limited") return "Too many checks. Wait a minute.";
     if (code === "not_granted" || code === "sampling_disabled") return "Allow the AI when asked, then try again.";
     if (code === "session_expired") return "You've been signed out. Sign in again, then try again.";
+    if (code === "no_credit") return "Your Claude account is out of credit. Add credit at console.anthropic.com.";
     if (code === "bad_key") return "The Claude API key was refused. Check it in Settings, under Smarter AI.";
     if (e && e.message === "network" && window.claude && !claudeVision) return "The AI photo reader isn't switched on in this view. Close and reopen GuideCart and choose Allow when it asks to use Claude, or open it on the claude.ai website.";
     if (e && e.message === "network") return "No internet.";
@@ -1678,7 +1690,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     labels[slot] = { product: r.product || "", price: num(r.price), quantity: num(r.quantity), unit: UNIT[String(r.unit || "").toLowerCase()] ? String(r.unit).toLowerCase() : "", confirmed: false };
     renderCompare();
     const L = labels[slot];
-    status("ok", `${L.price != null ? money(L.price) : "No price"}, ${L.quantity != null && L.unit ? L.quantity + " " + L.unit : "no size"}. Confirm?`);
+    status("ok", `${L.price != null ? money(L.price) : "No price"}, ${L.quantity != null && L.unit ? L.quantity + " " + ({ l: "litres", ml: "ml", kg: "kilos", g: "grams", each: "items" }[L.unit] || L.unit) : "no size"}. Confirm?`);
   }
   const num = (v) => { const n = parseFloat(v); return isFinite(n) ? n : null; };
   function renderCompare(speakVerdict) {
