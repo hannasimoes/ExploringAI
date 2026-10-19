@@ -442,7 +442,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const t = e.target;
     if (t.matches("input[type=text], input[type=number], select")) {
       const lab = t.labels && t.labels[0] ? clean(t.labels[0].textContent) : (t.getAttribute("aria-label") || "");
-      say(`${lab}. Text field.${t.value ? " Contains " + t.value + "." : ""}`, { echo: true });
+      say(`${lab}.`, { echo: true });
     }
   });
   // Visual status + speech together (M09)
@@ -520,7 +520,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const parts = String(text).split(/,|\band\b/i).map(t => t.trim().toLowerCase()).filter(Boolean);
     if (!parts.length) return;
     parts.forEach(p => items.push({ name: p, done: false })); saveItems();
-    say(`Added ${parts.join(", ")}. ${pending().length} items to get.`);
+    say(`Added ${parts.join(", ")}.`);
   }
   function renderHome() {
     const total = items.length, done = items.filter(i => i.done).length;
@@ -548,7 +548,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const inp = document.createElement("input"); inp.type = "text"; inp.value = it.name; inp.setAttribute("aria-label", "Edit item name");
     const ok = document.createElement("button"); ok.type = "submit"; ok.textContent = "Save";
     f.append(inp, ok); li.append(f); inp.focus();
-    f.onsubmit = (e) => { e.preventDefault(); const v = inp.value.trim().toLowerCase(); if (v) { it.name = v; say(`Changed to ${v}.`); } saveItems(); };
+    f.onsubmit = (e) => { e.preventDefault(); const v = inp.value.trim().toLowerCase(); if (v) { it.name = v; say(`${cap(v)}.`); } saveItems(); };
   }
   function renderList() {
     const pl = $("pendList"), dl = $("doneList"); pl.innerHTML = ""; dl.innerHTML = "";
@@ -623,7 +623,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
         said.forEach(p => items_add(p));
         saveItems();
         $("micNote").textContent = "Added: " + said.join(", ") + ".";
-        setTimeout(() => say(`Added ${said.join(", ")}. ${pending().length} items to get.`), 300);
+        setTimeout(() => say(`Added ${said.join(", ")}.`), 300);
       } else if ($("micNote").textContent.indexOf("Dictation") !== 0 && $("micNote").textContent.indexOf("Microphone") !== 0 && $("micNote").textContent.indexOf("I didn't") !== 0) {
         $("micNote").textContent = "I didn't catch any items. Try again, or type them.";
         setTimeout(() => say($("micNote").textContent), 300);
@@ -742,9 +742,9 @@ Shopping list: ${JSON.stringify(list)}.
 Identify the single main product in view. Do not guess beyond what is visible.
 Confidence: "high" when the product name is clearly printed or the item is unmistakable (e.g. a clear photo of bananas or a labelled milk bottle); "medium" when you are inferring from shape or a partly visible label; "low" only when the image is genuinely unclear.
 If you cannot identify a product, say plainly what the image shows instead (e.g. "a blurry shelf", "the floor", "a hand covering the lens", "the back of a box with only a barcode").
-"guidance" must be one short instruction a blind person can follow by touch and movement only: distances in centimetres, "turn the product a quarter turn", "move the phone up/left", "hold the product in your other hand", "hold still for two seconds". Use null if nothing is needed.
+"guidance" is one instruction of at most 6 words a blind person can follow by touch or movement, e.g. "Turn it a quarter turn." Use null if nothing is needed.
 Reply with ONLY JSON:
-{"readable": true|false, "seen": "what the image actually shows, in a few words", "product": "short product description, e.g. whole milk, or null", "brand": "brand or null", "size": "pack size as printed, e.g. 1 L, or null", "confidence": "high|medium|low", "list_match": "the matching item from the list, or null", "why_unsure": "short reason if confidence is not high, else null", "guidance": "touch-based instruction or null"}`;
+{"readable": true|false, "seen": "what the image actually shows, in a few words", "product": "2 to 4 word product name, e.g. whole milk, or null", "brand": "brand or null", "size": "pack size as printed, e.g. 1 L, or null", "confidence": "high|medium|low", "list_match": "the matching item from the list, or null", "why_unsure": "short reason if confidence is not high, else null", "guidance": "touch-based instruction or null"}`;
       return await visionJSON(prompt, canvas);
     }
     // On-phone fallback: combine object detection with printed words, and only report real grocery words
@@ -791,7 +791,7 @@ Reply with ONLY JSON:
 Read ALL legible text. Then organise it so it is easy to listen to.
 - For a menu: group by section, each dish with its price and a few words of description.
 - For promotions or leaflets: each offer with the product, the deal (e.g. "2 for £4.50", "half price"), the price, and any conditions or end date.
-"summary" is 1-2 short spoken sentences saying what this is and the most useful facts (e.g. "A lunch menu with 3 starters and 5 mains, from £6 to £15.").
+"summary" is one short spoken sentence, at most 12 words (e.g. "Lunch menu, 8 dishes, £6 to £15.").
 If the text cannot be read, say what the image shows and give one touch-based instruction (distance in centimetres, move left/right/up/down).
 Reply with ONLY JSON:
 {"readable": true|false, "kind": "menu|promotion|leaflet|sign|label|document|other", "summary": "string", "items": [{"name": "string", "price": "£0.00 or null", "detail": "short extra info or null"}], "full_text": "all the text in reading order, as plain text", "seen": "what the image shows if unreadable, else null", "guidance": "instruction or null"}`;
@@ -807,8 +807,8 @@ Reply with ONLY JSON:
   function showReading(r) {
     const box = $("readResult"); box.innerHTML = "";
     if (!r || !r.readable) {
-      const seen = r && r.seen && r.seen !== "null" ? `I can't read any text. I can see ${r.seen}. ` : "I can't read any text. ";
-      status("warn", seen + (r && r.guidance && r.guidance !== "null" ? r.guidance : "Hold the phone about 30 centimetres from the text, straight in front of it, and keep still."), { retry: () => runCheck() });
+      const seen = r && r.seen && r.seen !== "null" ? `No text. I see ${r.seen}. ` : "No text found. ";
+      status("warn", seen + (r && r.guidance && r.guidance !== "null" ? r.guidance : "Hold the phone 30 centimetres from the text."), { retry: () => runCheck() });
       return;
     }
     const items = Array.isArray(r.items) ? r.items.filter(i => i && i.name) : [];
@@ -873,8 +873,7 @@ Reply with ONLY JSON:
     setChip(); $("camBtn").textContent = "■ Stop camera";
     $("aimBtn").hidden = false;
     if (afterCamera) status("ok", viaGlasses ? "Glasses connected." : "Camera on.", { speak: false });
-    else if (viaGlasses) status("ok", "Glasses connected. Look towards the shelf and I'll tell you which way to turn your head.");
-    else status("ok", "Camera on. The camera is on the back of the phone, at the top. " + (mode === "find" ? "Hold the product about 30 centimetres in front of it. I'll tell you which way to move." : mode === "read" ? "Point it at the menu or sign, about 30 centimetres away. I'll tell you which way to move." : "Point it at the price label, about 20 centimetres away. I'll tell you which way to move."));
+    else status("ok", viaGlasses ? "Glasses connected." : "Camera on.");
     startAim();
     return true;
   }
@@ -901,7 +900,7 @@ Reply with ONLY JSON:
   function askCamera(then) {
     afterCamera = then || null;
     $("camChoice").hidden = false;
-    status("info", "Do you want me to turn on the phone camera, or connect your Meta glasses?");
+    status("info", "Phone camera, or Meta glasses?");
     $("usePhone").focus({ preventScroll: true });
   }
   $("camBtn").onclick = () => { if (stream) { stopCamera(false); return; } askCamera(null); };
@@ -909,9 +908,9 @@ Reply with ONLY JSON:
   $("usePhone").onclick = () => { $("camChoice").hidden = true; viaGlasses = false; cameraChosen(); };
   $("useGlasses").onclick = async () => {
     $("camChoice").hidden = true;
-    status("busy", "Looking for your Meta glasses. Make sure they're switched on and near your phone.");
+    status("busy", "Looking for your glasses.");
     await new Promise(r => setTimeout(r, 2200));
-    status("busy", "Found Ray-Ban Meta glasses. Connecting…");
+    status("busy", "Connecting.", { speak: false });
     await new Promise(r => setTimeout(r, 1800));
     viaGlasses = true;
     await cameraChosen();
@@ -967,12 +966,12 @@ Reply with ONLY JSON:
       }
       if (!box) {
         steady = 0;
-        if (Date.now() - aimNoneSince > 4000) { aimNoneSince = Date.now(); aimSay(viaGlasses ? "I can't see anything clearly yet. Turn your head slowly left and right." : "I can't see a product yet. Move the phone slowly left and right."); }
+        if (Date.now() - aimNoneSince > 4000) { aimNoneSince = Date.now(); aimSay(viaGlasses ? "Turn your head slowly." : "Move the phone slowly."); }
         return;
       }
       aimNoneSince = Date.now();
       const cx = box.x + box.w / 2, cy = box.y + box.h / 2, area = box.w * box.h;
-      const mv = viaGlasses ? { l: "Turn your head a little to the left.", r: "Turn your head a little to the right.", u: "Tilt your head up a little.", d: "Tilt your head down a little.", near: "Step a little closer.", far: "Step back a little." }
+      const mv = viaGlasses ? { l: "Head left.", r: "Head right.", u: "Head up.", d: "Head down.", near: "Closer.", far: "Back a bit." }
                             : { l: "It's on the left of the picture. Move the phone a little to the left.", r: "It's on the right of the picture. Move the phone a little to the right.", u: "It's near the top. Move the phone up a little.", d: "It's near the bottom. Move the phone down a little.", near: "It's too small. Move the phone a little closer.", far: "It's too close. Move the phone back a little." };
       let tip = null;
       if (cx < 0.33) tip = mv.l; else if (cx > 0.67) tip = mv.r;
@@ -980,15 +979,15 @@ Reply with ONLY JSON:
       else if (area < (wantText ? 0.05 : 0.06)) tip = mv.near; else if (area > 0.85) tip = mv.far;
       if (tip) { steady = 0; aimSay(tip); return; }
       steady++;
-      if (steady === 1) aimSay("That's it. Hold still.", true);
+      if (steady === 1) aimSay("Hold still.", true);
       if (steady >= 2) { steady = 0; lastTip = { text: "", t: Date.now() }; aimResume = Date.now() + (mode === "read" ? 25000 : 8000); runCheck(); }
     } catch (_) {} finally { aimBusy = false; }
   }
   $("aimBtn").onclick = () => {
     aimOn = !aimOn;
     $("aimBtn").setAttribute("aria-pressed", String(aimOn)); $("aimBtn").textContent = aimOn ? "🎯 Aim guide: on" : "🎯 Aim guide: off";
-    if (aimOn && stream) { startAim(); say("Aim guide on. I'll tell you which way to move, then check automatically when it's lined up."); }
-    else { stopAim(); say("Aim guide off. Tap the big button when you're ready."); }
+    if (aimOn && stream) { startAim(); say("Aim guide on."); }
+    else { stopAim(); say("Aim guide off."); }
   };
   // ---------- Walk mode: camera always on, names products as the shopper passes them ----------
   // On-phone AI, frame by frame: COCO-SSD object detection (loose fruit, veg, bottles)
@@ -1243,17 +1242,17 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     if (apiKey && !claudeVision) {
       walking = true; lastHeard = {}; lastScene = ""; stopAim();
       $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
-      status("ok", "Walk mode on, with Claude Vision. Hold the phone at chest height and walk slowly.");
+      status("ok", "Walk mode on.");
       claudeWalkLoop(++walkGen);
       return;
     }
     walking = true; lastHeard = {}; stopAim();
     $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
-    status("busy", "Starting walk mode. Loading the object finder, this takes a few seconds the first time.");
+    status("busy", "Starting walk mode.");
     await loadDetector().catch(() => null);
     if (!walking) return;
     if (!detector) { status("error", "Walk mode couldn't load its AI. Check your internet connection, then try again.", { retry: startWalk }); stopWalk(true); return; }
-    status("ok", "Walk mode on. Hold the phone at chest height and walk slowly.");
+    status("ok", "Walk mode on.");
     walkLoop(++walkGen);
     // The scene model (filtered to everyday things) and the label reader join in when ready
     loadClassifier().catch(() => null);
@@ -1269,7 +1268,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     if (was && !silent) status("info", "Walk mode off.");
   }
   // Stopping walk mode also turns the camera off, so everything goes quiet
-  $("walkBtn").onclick = () => { if (walking) { stopWalk(true); stopCamera(true); status("info", "Walk mode off. Camera off."); } else startWalk(); };
+  $("walkBtn").onclick = () => { if (walking) { stopWalk(true); stopCamera(true); status("info", "Walk mode off."); } else startWalk(); };
   document.addEventListener("visibilitychange", () => { if (document.hidden && walking) stopWalk(true); });
 
   function grab() {
@@ -1408,15 +1407,15 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     try { c = await s.make(); } catch (_) { status("error", "That sample photo couldn't be loaded. Tap Sample photo again for the next one."); return; }
     showPreview(c.toDataURL("image/jpeg", 0.9)); runCheck(c, true);
   };
-  $("tipsBtn").onclick = () => say(mode === "find" ? TURN_TIP : mode === "read" ? "Hold the phone about 30 centimetres from the text, straight in front of it. For a menu, lay it flat on the table and hold the phone above it at about the height of your elbow." : SHELF_TIP);
+  $("tipsBtn").onclick = () => say(mode === "find" ? TURN_TIP : mode === "read" ? "Hold the phone 30 centimetres above the text." : SHELF_TIP);
 
   // ---------- Find mode (M05, M06) ----------
   let mode = "find", busy = false, awaitingConfirm = false;
   function shopIntro() {
     if (mode === "read") return "Read text. Point the camera at a menu, a promotion sign or a leaflet, about 30 centimetres away, then tap Read text. I'll give you a short summary first.";
     return mode === "find"
-      ? `Guided shopping, find product. Hold one product in your hand, about 30 centimetres from the phone, roughly the length of your forearm. Then tap Check product, the large button in the middle of the screen. ${pending().length ? "Still to get: " + pending().map(i => i.name).join(", ") + "." : ""}`
-      : "Guided shopping, compare prices. Feel along the front edge of the shelf, just under the product, to find the price label. Hold the phone about 20 centimetres in front of it, then tap Read price label.";
+      ? "Find product."
+      : "Compare prices. Point at price label A.";
   }
   function setMode(m) {
     mode = m; ["Find", "Compare", "Read"].forEach(k => $("mode" + k).setAttribute("aria-pressed", String(m === k.toLowerCase())));
@@ -1424,9 +1423,9 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     $("findResult").hidden = m !== "find"; $("compareArea").hidden = m !== "compare"; $("readResult").hidden = m !== "read";
     steady = 0;
     $("sampleBtn").textContent = "🖼 Sample photo";
-    if (m === "compare") { renderCompare(); status("info", nextLabel() ? `Point at price label ${nextLabel()} and tap Read price label.` : "Both labels read. Confirm each one to compare."); }
+    if (m === "compare") { renderCompare(); status("info", nextLabel() ? `Compare prices. Point at label ${nextLabel()}.` : "Compare prices."); }
     else if (m === "read") status("info", shopIntro());
-    else status("info", "Hold a product about 30 centimetres from the phone and tap Check product.");
+    else status("info", "Find product.");
   }
   $("modeFind").onclick = () => setMode("find");
   $("modeCompare").onclick = () => setMode("compare");
@@ -1435,23 +1434,23 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
   function setBusy(b) { busy = b; $("checkBtn").disabled = b; $("sampleBtn").disabled = b; }
   function errorFor(e) {
     const code = e && e.code;
-    if (code === "rate_limited") return "Too many checks in a short time. Wait a minute, then try again.";
-    if (code === "not_granted" || code === "sampling_disabled") return "The AI service isn't allowed for this page. Allow it when asked, then try again.";
+    if (code === "rate_limited") return "Too many checks. Wait a minute.";
+    if (code === "not_granted" || code === "sampling_disabled") return "Allow the AI when asked, then try again.";
     if (code === "session_expired") return "You've been signed out. Sign in again, then try again.";
     if (code === "bad_key") return "The Claude API key was refused. Check it in Settings, under Smarter AI.";
     if (e && e.message === "network" && window.claude && !claudeVision) return "The AI photo reader isn't switched on in this view. Close and reopen GuideCart and choose Allow when it asks to use Claude, or open it on the claude.ai website.";
-    if (e && e.message === "network") return "No internet connection. Check your signal, then try again.";
-    return "The AI service didn't answer. Try again in a moment.";
+    if (e && e.message === "network") return "No internet.";
+    return "The AI didn't answer. Try again.";
   }
   async function runCheck(canvas, isSample) {
     if (busy) return;
     const c = canvas || (stream && video.videoWidth ? grab() : null);
     if (!c) { $("photoInput").click(); return; }
-    if (mode === "find" && !pending().length) { status("warn", "Your list has nothing left to find. Add items in My list."); return; }
+    if (mode === "find" && !pending().length) { status("warn", "Your list is empty."); return; }
     const q = isSample || mode === "read" ? null : imageQuality(c);
     if (q) { status("warn", q, { retry: () => runCheck() }); return; }
     setBusy(true);
-    status("busy", mode === "find" ? "Checking the product…" : mode === "read" ? (hasVision() ? "Reading the text…" : "Reading the text. This can take up to 10 seconds the first time…") : "Reading the price label…");
+    status("busy", "Checking.");
     try {
       if (mode === "find") showMatch(await identify(c));
       else if (mode === "read") showReading(await readText(c));
@@ -1461,8 +1460,8 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     } finally { setBusy(false); }
   }
   // Touch-based tips: a blind user can't see the frame or the label, so every tip uses distance, turning and hand position.
-  const TURN_TIP = "Hold the product in one hand, about 30 centimetres from the phone, roughly the length of your forearm. Turn the product slowly a quarter turn at a time and tap Check after each turn.";
-  const SHELF_TIP = "Run your fingers along the front edge of the shelf, just under the product, to find the price label. Hold the phone about 20 centimetres in front of that spot and tap Read price label.";
+  const TURN_TIP = "Hold it a forearm away and turn it slowly.";
+  const SHELF_TIP = "The label is on the shelf edge, under the product.";
   // Quick on-phone check before using the AI: too dark or too blurry
   function imageQuality(canvas) {
     try {
@@ -1473,22 +1472,22 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
       let sum = 0;
       for (let i = 0; i < w * h; i++) { const v = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; L[i] = v; sum += v; }
       const mean = sum / (w * h);
-      if (mean < 35) return "The photo is too dark, as if something is covering the camera. Check your fingers aren't over the lens at the top of the phone, then try again.";
-      if (mean > 245) return "The photo is almost completely white, probably from a bright light or a shiny surface. Tilt the phone slightly downwards and try again.";
+      if (mean < 35) return "Too dark. Check your finger isn't on the lens.";
+      if (mean > 245) return "Too bright. Tilt the phone down a little.";
       let lap = 0, n = 0;
       for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
         const i = y * w + x, v = 4 * L[i] - L[i - 1] - L[i + 1] - L[i - w] - L[i + w]; lap += v * v; n++;
       }
-      if (lap / n < 4) return "The photo is blurry. Hold the phone with both hands, rest your elbows against your body, and keep still for two seconds before tapping.";
+      if (lap / n < 4) return "Blurry. Hold still.";
     } catch (_) {}
     return null;
   }
   const CONF = { high: ["✓", "Confident"], medium: ["~", "Probably"], low: ["?", "Not sure"] };
-  const LEAD = { high: (d) => `This is ${d}.`, medium: (d) => `Probably ${d}.`, low: (d) => `I'm not sure, but it might be ${d}.` };
+  const LEAD = { high: (d) => `${cap(d)}.`, medium: (d) => `Probably ${d}.`, low: (d) => `Maybe ${d}.` };
   function showMatch(r) {
     const box = $("findResult"); box.innerHTML = "";
     if (!r || !r.readable || !r.product) {
-      const seen = r && r.seen && r.seen !== "null" ? `I can't identify a product. I can see ${r.seen}. ` : "I can't identify a product. ";
+      const seen = r && r.seen && r.seen !== "null" ? `Not sure. I see ${r.seen}. ` : "Not sure what this is. ";
       const tip = r && r.guidance && r.guidance !== "null" ? r.guidance : TURN_TIP;
       status("warn", seen + tip, { retry: () => runCheck() });
       return;
@@ -1501,20 +1500,20 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     card.querySelector(".what").textContent = cap(desc);
     card.querySelector(".why").textContent = r.why_unsure && r.why_unsure !== "null" ? r.why_unsure : "";
     let spoken = (LEAD[r.confidence] || LEAD.low)(desc);
-    if (r.confidence !== "high" && r.guidance && r.guidance !== "null") spoken += " " + r.guidance;
+    if (r.confidence === "low" && r.guidance && r.guidance !== "null") spoken += " " + r.guidance;
     if (match) {
       const q = document.createElement("p"); q.style.fontWeight = "700"; q.textContent = `Is this the ${match.name} on your list?`;
       const row = document.createElement("div"); row.className = "row2";
       const yes = document.createElement("button"); yes.type = "button"; yes.className = "primary"; yes.textContent = "✓ Yes, tick it off";
       const no = document.createElement("button"); no.type = "button"; no.className = "warn"; no.textContent = "✕ No";
-      yes.onclick = () => { match.done = true; saveItems(); awaitingConfirm = false; box.innerHTML = ""; status("ok", `${cap(match.name)} ticked off. ${pending().length ? pending().length + " left: " + pending().map(i => i.name).join(", ") + "." : "Your list is complete!"}`); };
-      no.onclick = () => { awaitingConfirm = false; box.innerHTML = ""; status("info", "OK, not ticked off. Point at the next product and tap Check."); };
+      yes.onclick = () => { match.done = true; saveItems(); awaitingConfirm = false; box.innerHTML = ""; status("ok", `${cap(match.name)} ticked off.${pending().length ? "" : " List complete!"}`); };
+      no.onclick = () => { awaitingConfirm = false; box.innerHTML = ""; status("info", "Not ticked."); };
       row.append(yes, no); card.append(q, row);
-      spoken += ` Is this the ${match.name} on your list?`;
+      spoken += ` Your ${match.name}?`;
       awaitingConfirm = true;
     } else {
       const p = document.createElement("p"); p.textContent = "This doesn't seem to be on your list.";
-      card.append(p); spoken += " This doesn't seem to be on your list.";
+      card.append(p); spoken += " Not on your list.";
     }
     box.append(card);
     status(match ? "ok" : "info", spoken);
@@ -1534,7 +1533,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     labels[slot] = { product: r.product || "", price: num(r.price), quantity: num(r.quantity), unit: UNIT[String(r.unit || "").toLowerCase()] ? String(r.unit).toLowerCase() : "", confirmed: false };
     renderCompare();
     const L = labels[slot];
-    status("ok", `Label ${slot}: ${L.product || "product"}, ${L.price != null ? money(L.price) : "price not read"}, ${L.quantity != null && L.unit ? L.quantity + " " + L.unit : "size not read"}. If that's right, tap Confirm values. If not, tap Read again, or change the numbers.`);
+    status("ok", `${L.price != null ? money(L.price) : "No price"}, ${L.quantity != null && L.unit ? L.quantity + " " + L.unit : "no size"}. Confirm?`);
   }
   const num = (v) => { const n = parseFloat(v); return isFinite(n) ? n : null; };
   function renderCompare(speakVerdict) {
@@ -1553,7 +1552,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
       ok.textContent = L.confirmed ? "✓ Confirmed" : "Confirm values";
       ok.onclick = () => { L.confirmed = true; renderCompare(true); if (!(labels.A && labels.B && labels.A.confirmed && labels.B.confirmed)) say(`Label ${s} confirmed.`); };
       const re = document.createElement("button"); re.type = "button"; re.style.minHeight = "56px"; re.style.fontSize = "1rem"; re.textContent = "↻ Read again";
-      re.onclick = () => { labels[s] = null; if (s === "A" && labels.B) { labels.A = labels.B; labels.B = null; } renderCompare(); status("info", `Point at label ${nextLabel()} and tap Read price label.`); };
+      re.onclick = () => { labels[s] = null; if (s === "A" && labels.B) { labels.A = labels.B; labels.B = null; } renderCompare(); status("info", `Point at label ${nextLabel()}.`); };
       row.append(ok, re); card.append(row);
     });
     finishCompare(!speakVerdict);
@@ -1578,17 +1577,17 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     const r = compareTwo(A, B); v.hidden = false; v.innerHTML = "";
     const h = document.createElement("p"); h.className = "verdict";
     let text;
-    if (!r.ok) text = r.reason === "units" ? "Comparison not available: one is sold by weight and the other by volume or by item." : "Comparison not available: a price or quantity is missing.";
-    else if (r.cheaper === "same") text = `Both cost the same: ${money(r.pa.value)} per ${r.pa.label}.`;
+    if (!r.ok) text = r.reason === "units" ? "Can't compare: different units." : "Can't compare: missing a price or size.";
+    else if (r.cheaper === "same") text = `Same price: ${money(r.pa.value)} per ${r.pa.label}.`;
     else {
       const win = r.cheaper === "A" ? A : B, wl = r.cheaper, wp = r.cheaper === "A" ? r.pa : r.pb, lp = r.cheaper === "A" ? r.pb : r.pa;
       $("card" + wl).classList.add("best");
-      text = `Label ${wl}, ${win.product || ""}, is better value: ${money(wp.value)} per ${wp.label}, against ${money(lp.value)}. You save ${money(r.saving)} per ${wp.label}.`;
+      text = `${win.product ? cap(win.product) : "Label " + wl} is cheaper: ${money(wp.value)} per ${wp.label}, against ${money(lp.value)}.`;
       const b = document.createElement("span"); b.className = "badge"; b.textContent = "★ Better value"; $("card" + wl).prepend(b);
     }
     h.textContent = text; v.append(h);
     const again = document.createElement("button"); again.type = "button"; again.textContent = "Compare two new labels";
-    again.onclick = () => { labels = { A: null, B: null }; renderCompare(); status("info", "Point at price label A and tap Read price label."); };
+    again.onclick = () => { labels = { A: null, B: null }; renderCompare(); status("info", "Point at label A."); };
     v.append(again);
     status(r.ok ? "ok" : "warn", text, { speak: !quiet });
   }
