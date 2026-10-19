@@ -377,6 +377,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
         <button type="button" id="apiSave" class="primary" style="min-height:58px;font-size:1.05rem">Save key</button>
         <button type="button" id="apiRemove">Remove key</button>
       </div>
+      <button type="button" id="apiTest">🧪 Test Claude Vision</button>
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
@@ -531,6 +532,26 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const v = $("apiKey").value.trim();
     if (!/^sk-ant-/.test(v)) { $("apiNote").textContent = "That doesn't look like an Anthropic key. It should start with sk-ant-."; say($("apiNote").textContent); return; }
     apiKey = v; keep("apikey", v); $("apiKey").value = ""; apiStatus(); say("Key saved. Claude Vision is on.");
+  };
+  $("apiTest").onclick = async () => {
+    const note = $("apiNote");
+    if (claudeVision) { note.textContent = "You're inside Claude, so GuideCart uses your Claude account here, not the key, and nothing is charged to the key. Open hannasimoes.github.io/ExploringAI to use the key."; say("Inside Claude. The key is only used on the website."); return; }
+    if (!apiKey) { note.textContent = "No key saved yet. Paste it above and tap Save key."; say("No key saved."); return; }
+    note.textContent = "Testing…";
+    try {
+      const r = await apiCall([{ type: "text", text: "Reply with just the word OK." }], true, 10);
+      apiDown = false;
+      note.textContent = `Working ✓ Claude replied using ${r.model}. This request will show on your Usage page within a few minutes.`;
+      say("Claude Vision is working.");
+    } catch (e) {
+      const why = e.code === "bad_key" ? "The key is wrong, deleted or has no permission. Create a new key and paste it again."
+        : e.code === "no_credit" ? "The account has no credit. Add credit under Billing at console.anthropic.com."
+        : e.code === "network" ? "The phone couldn't reach Claude. Check the internet connection."
+        : e.code === "rate_limited" ? "Too many requests right now. Wait a minute and test again."
+        : "Claude refused the request.";
+      note.textContent = `Not working ✕ ${why} Details: ${lastApiError}`;
+      say("Claude Vision is not working. Details are on screen.");
+    }
   };
   $("apiRemove").onclick = () => { apiKey = ""; keep("apikey", ""); apiStatus(); say("Key removed."); };
   setTimeout(apiStatus, 1500);
@@ -871,23 +892,38 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     if (a < 0 || b < a) throw { code: "invalid_json" };
     return JSON.parse(s.slice(a, b + 1));
   }
+  // Try the newest models first and remember the first one this key can use
+  const MODELS = { fast: ["claude-haiku-5-5", "claude-haiku-4-5", "claude-3-5-haiku-latest"], smart: ["claude-sonnet-5-5", "claude-sonnet-4-5", "claude-3-5-sonnet-latest"] };
+  const goodModel = { fast: null, smart: null };
+  let lastApiError = "";
+  async function apiCall(content, fast, maxTokens, signal) {
+    const kind = fast ? "fast" : "smart", tryList = goodModel[kind] ? [goodModel[kind]] : MODELS[kind];
+    for (const model of tryList) {
+      let res;
+      try {
+        res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST", signal,
+          headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json", "anthropic-dangerous-direct-browser-access": "true" },
+          body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: "user", content }] }),
+        });
+      } catch (_) { lastApiError = "Couldn't reach api.anthropic.com (no connection)."; throw Object.assign(new Error("network"), { code: "network" }); }
+      if (res.ok) { goodModel[kind] = model; lastApiError = ""; const data = await res.json(); return { model, text: (data.content || []).map(c => c.text || "").join("") }; }
+      const body = await res.text().catch(() => "");
+      let msg = body; try { msg = JSON.parse(body).error.message; } catch (_) {}
+      lastApiError = `${res.status}: ${msg}`;
+      if (res.status === 404 || (res.status === 400 && /model/i.test(msg))) continue; // try the next model
+      if (res.status === 401 || res.status === 403) throw { code: "bad_key" };
+      if (res.status === 429) throw { code: "rate_limited" };
+      if (/credit|billing|balance/i.test(msg)) throw { code: "no_credit" };
+      throw { code: "upstream_error" };
+    }
+    throw { code: "upstream_error" };
+  }
   async function apiVision(prompt, canvas, { fast = false, signal } = {}) {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST", signal,
-      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json", "anthropic-dangerous-direct-browser-access": "true" },
-      body: JSON.stringify({
-        model: fast ? "claude-haiku-5-5" : "claude-sonnet-5-5", max_tokens: fast ? 300 : 1200,
-        messages: [{ role: "user", content: [
-          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: smallJpeg(canvas, fast ? 640 : 1280) } },
-          { type: "text", text: prompt + "\nReply with ONLY the JSON object." } ] }],
-      }),
-    }).catch(() => { throw new Error("network"); });
-    if (res.status === 401) throw { code: "bad_key" };
-    if (res.status === 429) throw { code: "rate_limited" };
-    if (res.status === 400) { const body = await res.text().catch(() => ""); if (/credit/i.test(body)) throw { code: "no_credit" }; }
-    if (!res.ok) throw { code: "upstream_error" };
-    const data = await res.json();
-    return parseJSON((data.content || []).map(c => c.text || "").join(""));
+    const r = await apiCall([
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: smallJpeg(canvas, fast ? 640 : 1280) } },
+      { type: "text", text: prompt + "\nReply with ONLY the JSON object." }], fast, fast ? 300 : 1200, signal);
+    return parseJSON(r.text);
   }
   async function visionJSON(prompt, canvas, opts) {
     if (claudeVision) return sample.json(prompt, { images: await toBlob(canvas), modelTier: opts && opts.fast ? "quick" : "default", cache: false });
