@@ -523,6 +523,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   $("histClear").onclick = () => { purchases = []; keep("history", purchases); renderHistNote(); renderHome(); say("History cleared."); };
   $("histSample").onclick = () => { purchases = seedHistory().concat(purchases.filter(p => !p.sample)); keep("history", purchases); renderHistNote(); renderHome(); say("Sample history loaded."); };
   function apiStatus() {
+    if (apiKey && apiDown) { $("apiNote").textContent = `Claude Vision is paused because ${apiProblem}. GuideCart is using the on-phone AI meanwhile. Check console.anthropic.com.`; $("engineNote").textContent = "AI service: on-phone AI."; return; }
     $("apiNote").textContent = apiKey ? "Claude Vision is on. Key ending in " + apiKey.slice(-4) + "." : (claudeVision ? "Claude Vision is already on inside Claude. A key is only needed on the website." : "No key saved. GuideCart uses the smaller on-phone AI.");
     $("engineNote").textContent = claudeVision ? "AI service: Claude Vision. Photos are not stored by GuideCart." : apiKey ? "AI service: Claude Vision (your API key). Photos are not stored by GuideCart." : "AI service: on-phone AI. Photos never leave your phone.";
   }
@@ -848,7 +849,17 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   const toBlob = (c) => new Promise(r => c.toBlob(r, "image/jpeg", 0.88));
   // ---- Claude Vision through the user's own API key (website mode) ----
   let apiKey = load("apikey", "");
-  const hasVision = () => claudeVision || !!apiKey;
+  let apiDown = false, apiProblem = "";
+  const hasVision = () => claudeVision || (!!apiKey && !apiDown);
+  // Owner-facing only: the shopper never hears about keys or credit
+  function visionFailed(e) {
+    if (claudeVision || !apiKey) return;
+    if (e && (e.code === "rate_limited")) return; // brief: keep trying next time
+    apiDown = true;
+    apiProblem = e && e.code === "no_credit" ? "the account has no credit" : e && e.code === "bad_key" ? "the key was refused" : "Claude didn't respond";
+    try { apiStatus(); } catch (_) {}
+    setTimeout(() => { apiDown = false; try { apiStatus(); } catch (_) {} }, 5 * 60e3); // try Claude again in 5 minutes
+  }
   function smallJpeg(canvas, max) {
     const s = Math.min(1, max / Math.max(canvas.width, canvas.height)), c = document.createElement("canvas");
     c.width = Math.round(canvas.width * s); c.height = Math.round(canvas.height * s);
@@ -895,7 +906,7 @@ If you cannot identify a product, say plainly what the image shows instead (e.g.
 "guidance" is one instruction of at most 6 words a blind person can follow by touch or movement, e.g. "Turn it a quarter turn." Use null if nothing is needed.
 Reply with ONLY JSON:
 {"readable": true|false, "seen": "what the image actually shows, in a few words", "product": "2 to 4 word product name, e.g. whole milk, or null", "brand": "brand or null", "size": "pack size as printed, e.g. 1 L, or null", "price": "the product's price in pounds as a number if a price is visible (shelf label, sticker or listing), else null", "confidence": "high|medium|low", "list_match": "the matching item from the list, or null", "why_unsure": "short reason if confidence is not high, else null", "guidance": "touch-based instruction or null"}`;
-      return await visionJSON(prompt, canvas);
+      try { return await visionJSON(prompt, canvas); } catch (e) { if (claudeVision) throw e; visionFailed(e); }
     }
     // On-phone fallback: combine object detection with printed words, and only report real grocery words
     await loadWalkAI();
@@ -907,7 +918,8 @@ Reply with ONLY JSON:
     }
     const text = (await ocrLines(canvas)).join(" ");
     const words = [...new Set((norm(text).match(/[a-z]{3,}/g) || []).filter(w => GROCERY_SET.has(w)))];
-    const named = words.map(w => PRETTY[w] || w);
+    const named0 = [...new Set(words.map(w => PRETTY[w] || w))];
+    const named = named0.filter(n => !named0.some(m => m !== n && m.includes(n)));
     if (!named.length && !objectName) return { readable: false, seen: text ? "some print, but no product name I can recognise" : "no product I can recognise", guidance: TURN_TIP };
     const product = named.length ? named.slice(0, 3).join(" ") : objectName;
     const match = list.find(i => [product, ...named].some(n => stem(n).includes(stem(i)) || stem(i).includes(stem(n)))) || null;
@@ -922,7 +934,7 @@ Read the product name, the price in pounds, and the pack quantity with its unit.
 If no price label is readable, say plainly what the image shows instead, and give one instruction they can follow by touch and movement only. Shelf-edge labels sit on the front edge of the shelf, directly under the product; tell them, for example, to "run your fingers along the front edge of the shelf under the product and point the phone there, about 20 cm away".
 Reply with ONLY JSON:
 {"readable": true|false, "seen": "what the image actually shows, in a few words", "product": "name or null", "price": number or null, "quantity": number or null, "unit": "g|kg|ml|l|each or null", "guidance": "touch-based instruction or null"}`;
-      return await visionJSON(prompt, canvas);
+      try { return await visionJSON(prompt, canvas); } catch (e) { if (claudeVision) throw e; visionFailed(e); }
     }
     const text = await ocrText(canvas);
     const pm = text.match(/£\s?(\d+(?:[.,]\d{1,2})?)/) || text.match(/(\d+[.,]\d{2})/);
@@ -945,7 +957,7 @@ Read ALL legible text. Then organise it so it is easy to listen to.
 If the text cannot be read, say what the image shows and give one touch-based instruction (distance in centimetres, move left/right/up/down).
 Reply with ONLY JSON:
 {"readable": true|false, "kind": "menu|promotion|leaflet|sign|label|document|other", "summary": "string", "items": [{"name": "string", "price": "£0.00 or null", "detail": "short extra info or null"}], "full_text": "all the text in reading order, as plain text", "seen": "what the image shows if unreadable, else null", "guidance": "instruction or null"}`;
-      return await visionJSON(prompt, canvas);
+      try { return await visionJSON(prompt, canvas); } catch (e) { if (claudeVision) throw e; visionFailed(e); }
     }
     const lines = await ocrLines(canvas), text = lines.join("\n");
     if (text.replace(/[^A-Za-z]/g, "").length < 4) return { readable: false, seen: "no printed words", guidance: "Hold the phone about 30 centimetres from the text, straight in front of it, and keep still." };
@@ -1380,28 +1392,32 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
           }
         }
       } catch (e) {
-        if (e && (e.code === "bad_key" || e.code === "no_credit")) { status("error", errorFor(e)); stopWalk(true); return; }
+        if (e && e.code !== "rate_limited") { visionFailed(e); if (walking && gen === walkGen) startPhoneWalk(true); return; }
       }
       await sleep(Math.max(800, 3500 - (Date.now() - t0)));
     }
   }
   async function startWalk() {
     if (!stream) { askCamera(startWalk); return; }
-    if (apiKey && !claudeVision) {
+    if (apiKey && !apiDown && !claudeVision) {
       walking = true; lastHeard = {}; lastScene = ""; stopAim();
       $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
       status("ok", "Walk mode on.");
       claudeWalkLoop(++walkGen);
       return;
     }
+    startPhoneWalk(false);
+  }
+  async function startPhoneWalk(quiet) {
+    const gen = ++walkGen;
     walking = true; lastHeard = {}; stopAim();
     $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
-    status("busy", "Starting walk mode.");
+    if (!quiet) status("busy", "Starting walk mode.");
     await loadDetector().catch(() => null);
-    if (!walking) return;
-    if (!detector) { status("error", "Walk mode couldn't load its AI. Check your internet connection, then try again.", { retry: startWalk }); stopWalk(true); return; }
-    status("ok", "Walk mode on.");
-    walkLoop(++walkGen);
+    if (!walking || gen !== walkGen) return;
+    if (!detector) { status("error", "Walk mode isn't working right now. Check your internet, then try again.", { retry: startWalk }); stopWalk(true); return; }
+    if (!quiet) status("ok", "Walk mode on.");
+    walkLoop(gen);
     // The scene model (filtered to everyday things) and the label reader join in when ready
     loadClassifier().catch(() => null);
     getWorker().then(w => { ocrWorker = w; }).catch(() => null);
@@ -1585,8 +1601,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     if (code === "rate_limited") return "Too many checks. Wait a minute.";
     if (code === "not_granted" || code === "sampling_disabled") return "Allow the AI when asked, then try again.";
     if (code === "session_expired") return "You've been signed out. Sign in again, then try again.";
-    if (code === "no_credit") return "Your Claude account is out of credit. Add credit at console.anthropic.com.";
-    if (code === "bad_key") return "The Claude API key was refused. Check it in Settings, under Smarter AI.";
+    if (code === "no_credit" || code === "bad_key") return "Something went wrong. Try again.";
     if (e && e.message === "network" && window.claude && !claudeVision) return "The AI photo reader isn't switched on in this view. Close and reopen GuideCart and choose Allow when it asks to use Claude, or open it on the claude.ai website.";
     if (e && e.message === "network") return "No internet.";
     return "The AI didn't answer. Try again.";
