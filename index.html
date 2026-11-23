@@ -232,7 +232,10 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <div class="progress" aria-hidden="true"><span id="homeBar" style="width:0%"></span></div>
       <button type="button" data-go="shop">🛒 Start shopping</button>
     </div>
-    <button type="button" class="askBtn" data-ask>💬 Ask GuideCart</button>
+    <div class="row2">
+      <button type="button" class="askBtn" data-askvoice>🎤 Ask by voice</button>
+      <button type="button" class="askBtn" data-ask>💬 Ask GuideCart</button>
+    </div>
     <div class="row2">
       <button type="button" data-go="list">✚ Create list</button>
       <button type="button" data-go="list">☰ My list</button>
@@ -270,7 +273,10 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   <!-- SHOP -->
   <section class="screen" id="s-shop" hidden aria-labelledby="shop-h">
     <h1 id="shop-h">Guided shopping</h1>
-    <button type="button" class="askBtn" data-ask>💬 Ask GuideCart</button>
+    <div class="row2">
+      <button type="button" class="askBtn" data-askvoice>🎤 Ask by voice</button>
+      <button type="button" class="askBtn" data-ask>💬 Ask GuideCart</button>
+    </div>
     <div class="modes" role="group" aria-label="Mode">
       <button type="button" id="modeFind" aria-pressed="true">🔍 Find product</button>
       <button type="button" id="modeCompare" aria-pressed="false">⚖ Compare prices</button>
@@ -462,7 +468,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const el = e.target.closest("button, label.btn");
     if (!el || el.disabled) return;
     if (el.matches("label.btn") && e.target.tagName === "INPUT") return;
-    if (el.id === "micBtn") return;
+    if (el.id === "micBtn" || el.hasAttribute("data-askvoice")) return;
     say(controlName(el), { echo: true });
   }, true);
   document.addEventListener("focusin", (e) => {
@@ -1817,12 +1823,76 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     status(r.ok ? "ok" : "warn", text, { speak: !quiet });
   }
 
-  // ---------- Ask GuideCart: Botpress chat agent ----------
-  document.querySelectorAll("[data-ask]").forEach(b => b.addEventListener("click", () => {
-    const bp = window.botpress;
-    if (bp && typeof bp.open === "function") {
-      try { bp.open(); } catch (_) { say("The assistant isn't ready yet. Try again in a moment."); }
-    } else say("The assistant is still loading. Try again in a moment.");
+  // ---------- Ask GuideCart: Botpress chat agent, with voice ----------
+  // The agent's replies are read aloud by the app's own voice (or passed to VoiceOver).
+  const bp = () => window.botpress;
+  let chatTalk = false, lastAsked = "", spokenIds = new Set(), bpHooked = false;
+  function textOf(m) {
+    if (!m) return "";
+    const p = m.payload || m.data || m;
+    return String(p.text || (p.block && p.block.text) || p.markdown || m.text || "").trim();
+  }
+  function fromUser(m) {
+    const b = bp();
+    return !!(m && (m.direction === "outgoing" || m.isUser || m.role === "user" ||
+      (b && b.user && m.authorId && m.authorId === b.user.id) || (m.userId && b && b.user && m.userId === b.user.id)));
+  }
+  function hookBotpress() {
+    const b = bp();
+    if (bpHooked || !b || typeof b.on !== "function") return;
+    bpHooked = true;
+    b.on("message", (m) => {
+      const text = textOf(m);
+      if (!chatTalk || !text || fromUser(m) || norm(text) === norm(lastAsked)) return;
+      const id = m.id || text;
+      if (spokenIds.has(id)) return;
+      spokenIds.add(id);
+      if (settings.voice === "sr") { $("live").textContent = text; return; }
+      if (settings.voice === "app") sayLong(text);
+    });
+    if (typeof b.on === "function") { try { b.on("webchat:closed", () => { chatTalk = false; hush(); }); } catch (_) {} }
+  }
+  const hookTimer = setInterval(() => { hookBotpress(); if (bpHooked) clearInterval(hookTimer); }, 1000);
+  function openChat() {
+    const b = bp();
+    if (!b || typeof b.open !== "function") { say("The assistant is still loading. Try again in a moment."); return false; }
+    hookBotpress();
+    try { b.open(); } catch (_) { say("The assistant isn't ready yet. Try again in a moment."); return false; }
+    chatTalk = true;
+    return true;
+  }
+  document.querySelectorAll("[data-ask]").forEach(btn => btn.addEventListener("click", () => openChat()));
+  // Ask by voice: listen, send the question to the agent, read the answer aloud
+  let askRec = null;
+  document.querySelectorAll("[data-askvoice]").forEach(btn => btn.addEventListener("click", () => {
+    if (askRec) { try { askRec.stop(); } catch (_) {} return; }
+    const b = bp();
+    if (!b || typeof b.open !== "function") { say("The assistant is still loading. Try again in a moment."); return; }
+    if (!SR) { openChat(); say("Voice questions aren't available here. Use the microphone on your keyboard."); return; }
+    try { askRec = new SR(); } catch (_) { askRec = null; }
+    if (!askRec) { openChat(); return; }
+    hush();
+    const r = askRec; let heardQ = "";
+    r.lang = "en-GB"; r.interimResults = false; r.continuous = false;
+    document.querySelectorAll("[data-askvoice]").forEach(x => { x.textContent = "■ Listening…"; x.setAttribute("aria-pressed", "true"); });
+    r.onresult = (e) => { heardQ = Array.from(e.results).map(x => x[0].transcript).join(" ").trim(); };
+    r.onerror = () => {};
+    r.onend = () => {
+      askRec = null;
+      document.querySelectorAll("[data-askvoice]").forEach(x => { x.textContent = "🎤 Ask by voice"; x.setAttribute("aria-pressed", "false"); });
+      if (!heardQ) { setTimeout(() => say("I didn't catch that. Try again."), 250); return; }
+      if (!openChat()) return;
+      lastAsked = heardQ;
+      const send = () => {
+        try {
+          if (typeof b.sendMessage === "function") b.sendMessage(heardQ);
+          else setTimeout(() => say("Type your question in the chat."), 250);
+        } catch (_) { setTimeout(() => say("Type your question in the chat."), 250); }
+      };
+      // give the chat a moment to open the first time
+      setTimeout(send, 700);
+    };
+    try { r.start(); } catch (_) { askRec = null; }
   }));
 
   // ---------- Start ----------
