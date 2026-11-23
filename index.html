@@ -156,6 +156,9 @@ ul.items button { width: 48px; min-height: 48px; height: 48px; padding: 0; borde
 .notice { display: grid; gap: 10px; border: 3px solid var(--alert); background: var(--alert-soft); border-radius: 16px; padding: 14px 16px; font-weight: 700; }
 .tipline { display: flex; gap: 8px; align-items: flex-start; background: var(--alert-soft); border-radius: 12px; padding: 10px 12px; font-weight: 700; }
 .askBtn { border-color: var(--primary) !important; color: var(--primary) !important; }
+.talkBtn { background: var(--primary) !important; color: var(--primary-ink) !important; min-height: 72px; font-size: 1.2rem; }
+.talkBtn[aria-pressed="true"] { background: var(--alert) !important; border-color: var(--alert) !important; color: #ffffff !important; }
+.typeBtn { min-height: 48px; font-size: .95rem; }
 .bpFab, #fab-root, .bpWebchat-fab { bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important; }
 .label-card { border: 2px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 10px; }
 .label-card.best { border: 3px solid var(--primary); }
@@ -232,10 +235,8 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <div class="progress" aria-hidden="true"><span id="homeBar" style="width:0%"></span></div>
       <button type="button" data-go="shop">🛒 Start shopping</button>
     </div>
-    <div class="row2">
-      <button type="button" class="askBtn" data-askvoice>🎤 Ask by voice</button>
-      <button type="button" class="askBtn" data-ask>💬 Ask GuideCart</button>
-    </div>
+    <button type="button" class="askBtn talkBtn" data-talk aria-pressed="false">🎤 Talk to GuideCart</button>
+    <button type="button" class="askBtn typeBtn" data-ask>⌨ Type instead</button>
     <div class="row2">
       <button type="button" data-go="list">✚ Create list</button>
       <button type="button" data-go="list">☰ My list</button>
@@ -273,10 +274,8 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   <!-- SHOP -->
   <section class="screen" id="s-shop" hidden aria-labelledby="shop-h">
     <h1 id="shop-h">Guided shopping</h1>
-    <div class="row2">
-      <button type="button" class="askBtn" data-askvoice>🎤 Ask by voice</button>
-      <button type="button" class="askBtn" data-ask>💬 Ask GuideCart</button>
-    </div>
+    <button type="button" class="askBtn talkBtn" data-talk aria-pressed="false">🎤 Talk to GuideCart</button>
+    <button type="button" class="askBtn typeBtn" data-ask>⌨ Type instead</button>
     <div class="modes" role="group" aria-label="Mode">
       <button type="button" id="modeFind" aria-pressed="true">🔍 Find product</button>
       <button type="button" id="modeCompare" aria-pressed="false">⚖ Compare prices</button>
@@ -468,7 +467,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const el = e.target.closest("button, label.btn");
     if (!el || el.disabled) return;
     if (el.matches("label.btn") && e.target.tagName === "INPUT") return;
-    if (el.id === "micBtn" || el.hasAttribute("data-askvoice")) return;
+    if (el.id === "micBtn" || el.hasAttribute("data-talk")) return;
     say(controlName(el), { echo: true });
   }, true);
   document.addEventListener("focusin", (e) => {
@@ -1823,10 +1822,13 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     status(r.ok ? "ok" : "warn", text, { speak: !quiet });
   }
 
-  // ---------- Ask GuideCart: Botpress chat agent, with voice ----------
-  // The agent's replies are read aloud by the app's own voice (or passed to VoiceOver).
+  // ---------- Talk to GuideCart: a spoken conversation with the Botpress agent ----------
+  // Tap once: beep, listen, send the question, read the answer aloud, beep, listen again.
+  // Say "stop", "bye" or "thank you", stay silent twice, or tap the button again to end.
   const bp = () => window.botpress;
-  let chatTalk = false, lastAsked = "", spokenIds = new Set(), bpHooked = false;
+  let typedChat = false;
+  let bpHooked = false, talking = false, waitingReply = null, lastAsked = "", silentTurns = 0;
+  const seenMsg = new Set();
   function textOf(m) {
     if (!m) return "";
     const p = m.payload || m.data || m;
@@ -1835,7 +1837,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
   function fromUser(m) {
     const b = bp();
     return !!(m && (m.direction === "outgoing" || m.isUser || m.role === "user" ||
-      (b && b.user && m.authorId && m.authorId === b.user.id) || (m.userId && b && b.user && m.userId === b.user.id)));
+      (b && b.user && (m.authorId === b.user.id || m.userId === b.user.id))));
   }
   function hookBotpress() {
     const b = bp();
@@ -1843,56 +1845,100 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     bpHooked = true;
     b.on("message", (m) => {
       const text = textOf(m);
-      if (!chatTalk || !text || fromUser(m) || norm(text) === norm(lastAsked)) return;
-      const id = m.id || text;
-      if (spokenIds.has(id)) return;
-      spokenIds.add(id);
-      if (settings.voice === "sr") { $("live").textContent = text; return; }
-      if (settings.voice === "app") sayLong(text);
+      if (!text || fromUser(m) || norm(text) === norm(lastAsked)) return;
+      const id = m.id || text; if (seenMsg.has(id)) return; seenMsg.add(id);
+      if (waitingReply) { const r = waitingReply; waitingReply = null; r(text); }
+      else if (typedChat) speakThen(text, () => {});
     });
-    if (typeof b.on === "function") { try { b.on("webchat:closed", () => { chatTalk = false; hush(); }); } catch (_) {} }
+    try { b.on("webchat:closed", () => { typedChat = false; }); } catch (_) {}
   }
   const hookTimer = setInterval(() => { hookBotpress(); if (bpHooked) clearInterval(hookTimer); }, 1000);
-  function openChat() {
-    const b = bp();
-    if (!b || typeof b.open !== "function") { say("The assistant is still loading. Try again in a moment."); return false; }
-    hookBotpress();
-    try { b.open(); } catch (_) { say("The assistant isn't ready yet. Try again in a moment."); return false; }
-    chatTalk = true;
-    return true;
+  function setTalkButtons(on, label) {
+    document.querySelectorAll("[data-talk]").forEach(x => { x.setAttribute("aria-pressed", String(on)); x.textContent = label || (on ? "■ Stop talking" : "🎤 Talk to GuideCart"); });
   }
-  document.querySelectorAll("[data-ask]").forEach(btn => btn.addEventListener("click", () => openChat()));
-  // Ask by voice: listen, send the question to the agent, read the answer aloud
-  let askRec = null;
-  document.querySelectorAll("[data-askvoice]").forEach(btn => btn.addEventListener("click", () => {
-    if (askRec) { try { askRec.stop(); } catch (_) {} return; }
+  let audioCtx = null;
+  function beep(freq = 880, ms = 140) {
+    return new Promise(res => {
+      try {
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === "suspended") audioCtx.resume();
+        const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.frequency.value = freq; g.gain.value = 0.15; o.connect(g); g.connect(audioCtx.destination);
+        o.start(); o.stop(audioCtx.currentTime + ms / 1000); o.onended = () => setTimeout(res, 80);
+      } catch (_) { res(); }
+    });
+  }
+  // Speak, then call back when finished (with a safety timer in case the phone never says it's done)
+  function speakThen(text, done) {
+    if (settings.voice !== "app" || !window.speechSynthesis) { if (settings.voice === "sr") $("live").textContent = text; setTimeout(done, settings.voice === "sr" ? Math.min(15000, 1500 + text.length * 70) : 300); return; }
+    try { speechSynthesis.cancel(); } catch (_) {}
+    const parts = String(text).match(/[^.!?\n]{1,180}[.!?\n]?/g) || [text];
+    let finished = false; const fin = () => { if (!finished) { finished = true; done(); } };
+    parts.forEach((pc, i) => {
+      const u = new SpeechSynthesisUtterance(pc.trim()); u.lang = "en-GB"; if (voice) u.voice = voice;
+      if (i === parts.length - 1) u.onend = fin;
+      speechSynthesis.speak(u);
+    });
+    setTimeout(fin, 2500 + text.length * 85);
+  }
+  function showTurn(who, text) { $("statusIc").textContent = who === "you" ? "🎤" : "💬"; $("statusText").textContent = (who === "you" ? "You: " : "GuideCart: ") + text; $("statusBox").classList.remove("error"); }
+  function listenOnce() {
+    return new Promise(res => {
+      let rec; try { rec = new SR(); } catch (_) { res({ err: "no-sr" }); return; }
+      let heard = "", err = null;
+      rec.lang = "en-GB"; rec.interimResults = false; rec.continuous = false;
+      rec.onresult = (e) => { heard = Array.from(e.results).map(x => x[0].transcript).join(" ").trim(); };
+      rec.onerror = (e) => { err = e && e.error; };
+      rec.onend = () => { talkRec = null; res({ text: heard, err }); };
+      talkRec = rec;
+      try { rec.start(); } catch (_) { talkRec = null; res({ err: "not-allowed" }); }
+    });
+  }
+  let talkRec = null;
+  function stopTalking(msg) {
+    talking = false; waitingReply = null; silentTurns = 0;
+    if (talkRec) { try { talkRec.abort ? talkRec.abort() : talkRec.stop(); } catch (_) {} talkRec = null; }
+    setTalkButtons(false);
+    if (msg) { hush(); setTimeout(() => say(msg), 150); }
+  }
+  async function talkTurn() {
+    if (!talking) return;
+    await beep();
+    if (!talking) return;
+    const r = await listenOnce();
+    if (!talking) return;
+    if (r.err === "not-allowed" || r.err === "service-not-allowed") { stopTalking("Microphone access is off. Allow it in Settings, or tap Type instead."); return; }
+    if (!r.text) { silentTurns++; if (silentTurns >= 2) { stopTalking("Talk to GuideCart is off."); return; } setTimeout(talkTurn, 200); return; }
+    silentTurns = 0;
+    if (/^(stop|bye|goodbye|that's all|that is all|thank you|thanks|no thanks|cancel|exit)[.!]?$/i.test(r.text)) { stopTalking("Bye for now."); return; }
+    showTurn("you", r.text);
+    const b = bp(); lastAsked = r.text;
+    const reply = new Promise(res => { waitingReply = res; setTimeout(() => { if (waitingReply === res) { waitingReply = null; res(""); } }, 20000); });
+    try { b.sendMessage(r.text); } catch (_) { stopTalking("Something went wrong. Let's try again."); return; }
+    beep(660, 90); // "got it"
+    const answer = await reply;
+    if (!talking) return;
+    if (!answer) { stopTalking("No answer yet. Tap Talk to GuideCart to try again."); return; }
+    showTurn("bot", answer);
+    speakThen(answer, () => { if (!talking) return; if (settings.voice === "sr") { stopTalking(); return; } talkTurn(); });
+  }
+  document.querySelectorAll("[data-talk]").forEach(btn => btn.addEventListener("click", () => {
+    if (talking) { stopTalking("Stopped."); return; }
+    const b = bp();
+    if (!b || typeof b.sendMessage !== "function") { say("The assistant is still loading. Try again in a moment."); return; }
+    if (!SR) { say("Voice isn't available here. Tap Type instead."); return; }
+    hookBotpress(); hush();
+    talking = true; typedChat = false; silentTurns = 0; setTalkButtons(true);
+    if (stream || walking) { stopWalk(true); stopCamera(true); }
+    talkTurn();
+  }));
+  // Type instead: opens the written chat; replies are still read aloud
+  document.querySelectorAll("[data-ask]").forEach(btn => btn.addEventListener("click", () => {
     const b = bp();
     if (!b || typeof b.open !== "function") { say("The assistant is still loading. Try again in a moment."); return; }
-    if (!SR) { openChat(); say("Voice questions aren't available here. Use the microphone on your keyboard."); return; }
-    try { askRec = new SR(); } catch (_) { askRec = null; }
-    if (!askRec) { openChat(); return; }
-    hush();
-    const r = askRec; let heardQ = "";
-    r.lang = "en-GB"; r.interimResults = false; r.continuous = false;
-    document.querySelectorAll("[data-askvoice]").forEach(x => { x.textContent = "■ Listening…"; x.setAttribute("aria-pressed", "true"); });
-    r.onresult = (e) => { heardQ = Array.from(e.results).map(x => x[0].transcript).join(" ").trim(); };
-    r.onerror = () => {};
-    r.onend = () => {
-      askRec = null;
-      document.querySelectorAll("[data-askvoice]").forEach(x => { x.textContent = "🎤 Ask by voice"; x.setAttribute("aria-pressed", "false"); });
-      if (!heardQ) { setTimeout(() => say("I didn't catch that. Try again."), 250); return; }
-      if (!openChat()) return;
-      lastAsked = heardQ;
-      const send = () => {
-        try {
-          if (typeof b.sendMessage === "function") b.sendMessage(heardQ);
-          else setTimeout(() => say("Type your question in the chat."), 250);
-        } catch (_) { setTimeout(() => say("Type your question in the chat."), 250); }
-      };
-      // give the chat a moment to open the first time
-      setTimeout(send, 700);
-    };
-    try { r.start(); } catch (_) { askRec = null; }
+    hookBotpress();
+    try { b.open(); } catch (_) { say("The assistant isn't ready yet. Try again in a moment."); return; }
+    typedChat = true;
   }));
 
   // ---------- Start ----------
