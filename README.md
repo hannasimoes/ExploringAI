@@ -27,6 +27,7 @@ No account, no install and no app store needed.
 | Live camera → Meta glasses | When turning the camera on, GuideCart asks whether to use the phone camera or Meta smart glasses. **The glasses option is a concept preview**: it shows the connection flow and head-movement guidance, but uses the phone camera. A real integration would use Meta's Wearables Device Access Toolkit in a native app. |
 | Shop → Walk mode | The camera stays on while you move. GuideCart describes what it sees, with labelled boxes on screen: people, chairs, tables, bottles, fruit and about 80 kinds of object ("I can see a chair on your left, a table ahead"), warns when something is very close, and says when something is on your list ("Milk, on your right. That's on your list!"). |
 | Home → Your assistant | GuideCart remembers what you buy (price and date, kept on the phone) and learns your patterns: price changes ("Semi-skimmed milk went up 10p"), habits ("You usually buy bread every week. Add to list?") and things you may not need ("You bought eggs 3 days ago. Still need them?"). When a product is checked, it compares today's price with your last purchase ("10p more than last week. Keep it?"). The app starts with clearly labelled sample history for demos, which can be cleared in Settings. |
+| Ask GuideCart | A chat agent (built with Botpress) the shopper can talk to: questions about the list, products, prices and how to use the app. Opened with the "Ask GuideCart" button on Home and Shop. Its instructions tell it to keep replies short for screen readers, confirm before changing anything, never invent product details and always advise double-checking allergens. |
 | Settings | Spoken results (app voice, screen reader or off), text and button size, theme, high contrast and reduced motion. |
 
 Every button says its name aloud when tapped (in App voice mode). Every instruction is spoken and uses touch and distance ("hold the product about 30 cm from the phone, roughly the length of your forearm"), never "look at the screen".
@@ -42,6 +43,7 @@ Every button says its name aloud when tapped (in App voice mode). Every instruct
 - **Walk mode (Claude Vision, optional):** with an Anthropic API key saved in Settings, a small frame is sent to Claude every few seconds and Claude describes what the user is passing, reads signs and product names, and flags list items. The key is entered by the user and stored only on their phone; it is never in the code or this repository.
 - **On-phone image check:** before using the AI, the app checks whether a photo is too dark, too bright or blurry, and tells the user how to fix it.
 - **Speech:** the browser's built-in speech synthesis (British English voice); dictation uses the browser's speech recognition where available, with the keyboard microphone as a fallback.
+- **Chat agent:** Botpress webchat, loaded from Botpress's servers; the app opens it with `window.botpress.open()`. If it can't load, the rest of the app works as normal.
 - **Storage:** the list and settings are kept in the phone's browser storage. Nothing is stored on a server.
 
 ```
