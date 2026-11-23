@@ -387,6 +387,9 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
         <button type="button" id="apiRemove">Remove key</button>
       </div>
       <button type="button" id="apiTest">🧪 Test Claude Vision</button>
+      <button type="button" id="apiShare">🔗 Copy setup link for testers</button>
+      <label for="apiShareBox" class="sr">Setup link</label>
+      <input id="apiShareBox" type="text" readonly hidden>
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
@@ -542,6 +545,14 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const v = $("apiKey").value.trim();
     if (!/^sk-ant-/.test(v)) { $("apiNote").textContent = "That doesn't look like an Anthropic key. It should start with sk-ant-."; say($("apiNote").textContent); return; }
     apiKey = v; keep("apikey", v); $("apiKey").value = ""; apiStatus(); say("Key saved. Claude Vision is on.");
+  };
+  $("apiShare").onclick = async () => {
+    const note = $("apiNote"), box = $("apiShareBox");
+    if (!apiKey) { note.textContent = "Save a key first, then copy the setup link."; return; }
+    const link = location.origin + location.pathname + "#key=" + apiKey;
+    box.value = link; box.hidden = false;
+    try { await navigator.clipboard.writeText(link); note.textContent = "Setup link copied. Anyone who opens it uses your credit, so share it only with your testers, and delete the key in the Claude Console when testing ends."; say("Setup link copied."); }
+    catch (_) { box.focus(); box.select(); note.textContent = "Copy the link in the box above. Anyone who opens it uses your credit, so share it only with your testers."; }
   };
   $("apiTest").onclick = async () => {
     const note = $("apiNote");
@@ -880,6 +891,14 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   const toBlob = (c) => new Promise(r => c.toBlob(r, "image/jpeg", 0.88));
   // ---- Claude Vision through the user's own API key (website mode) ----
   let apiKey = load("apikey", "");
+  (function readSetupLink() {
+    try {
+      const m = String(location.hash || "").match(/[#&]key=(sk-ant-[A-Za-z0-9_\-]+)/);
+      if (!m) return;
+      apiKey = m[1]; keep("apikey", apiKey);
+      history.replaceState(null, "", location.pathname + location.search);
+    } catch (_) {}
+  })();
   let apiDown = false, apiProblem = "";
   const hasVision = () => claudeVision || (!!apiKey && !apiDown);
   // Owner-facing only: the shopper never hears about keys or credit
