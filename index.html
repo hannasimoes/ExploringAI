@@ -876,7 +876,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   // Owner-facing only: the shopper never hears about keys or credit
   function visionFailed(e) {
     if (claudeVision || !apiKey) return;
-    if (e && (e.code === "rate_limited")) return; // brief: keep trying next time
+    if (!e || !["bad_key", "no_credit", "upstream_error", "network"].includes(e.code)) return; // one-off odd reply: just use the phone for this check
     apiDown = true;
     apiProblem = e && e.code === "no_credit" ? "the account has no credit" : e && e.code === "bad_key" ? "the key was refused" : "Claude didn't respond";
     try { apiStatus(); } catch (_) {}
@@ -1437,7 +1437,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
           }
         }
       } catch (e) {
-        if (e && e.code !== "rate_limited") { visionFailed(e); if (walking && gen === walkGen) startPhoneWalk(true); return; }
+        if (e && ["bad_key", "no_credit", "upstream_error", "network"].includes(e.code)) { visionFailed(e); if (walking && gen === walkGen) startPhoneWalk(true); return; }
       }
       await sleep(Math.max(800, 3500 - (Date.now() - t0)));
     }
