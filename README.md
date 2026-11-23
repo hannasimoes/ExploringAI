@@ -56,6 +56,7 @@ tests/unit-price.test.mjs  arithmetic test for price comparison
 
 ## Security and privacy
 
+- **Photos are never saved.** A photo stays in the phone's memory only while it is being checked, and is cleared when the user leaves the Shop screen or closes the app. Photos taken in GuideCart are not added to the phone's Photos app. As a safety net, the app checks the phone's storage at start-up and every hour: any GuideCart photo record older than 7 days, and any undated image data, is deleted. When Smarter AI is on, a photo is sent to Claude (Anthropic) to be read; GuideCart does not store it, and Anthropic's own data policy applies.
 - No API key is stored in the app's code, this repository or any log. The optional key for Claude Vision is typed in by the user and kept only in their phone's browser storage.
 - Photos are not saved. In GitHub Pages mode they are processed only on the phone.
 - The camera is only used after the user taps a button.

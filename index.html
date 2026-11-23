@@ -370,6 +370,10 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="voiceNote" style="font-size:.95rem">No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up.</p>
     </div>
     <div class="panel">
+      <h2>Your photos</h2>
+      <p class="muted" style="font-size:.95rem">GuideCart never saves your photos. A photo stays in memory only while it is being checked, and is cleared when you leave the Shop screen or close the app. Photos taken here are not added to your Photos app. As a safety net, any photo data left on this phone is deleted within 7 days. When Smarter AI is on, a photo is sent to Claude to be read and is not stored by GuideCart.</p>
+    </div>
+    <div class="panel">
       <h2>Shopping history</h2>
       <p class="muted" style="font-size:.95rem" id="histNote"></p>
       <div class="row2">
@@ -393,7 +397,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-23 (update 3)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-23 (update 4)</p>
   </section>
 </div>
 
@@ -415,6 +419,30 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   // ---------- Storage ----------
   const load = (k, d) => { try { const v = localStorage.getItem("gc-" + k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
   const keep = (k, v) => { try { localStorage.setItem("gc-" + k, JSON.stringify(v)); } catch (_) {} };
+
+  // ---------- Photo privacy ----------
+  // GuideCart never saves photos: they stay in memory only while being checked, and are cleared
+  // when you leave the Shop screen or close the app. As a safety net, anything image-like found in
+  // this phone's storage is deleted, and any photo record older than 7 days is always removed.
+  const PHOTO_MAX_AGE = 7 * 24 * 3600e3;
+  const looksLikePhoto = (k, v) => /photo|image|img|snapshot|frame|picture/i.test(k) || /data:image\/|blob:/i.test(String(v || "").slice(0, 2000));
+  function enforcePhotoRetention() {
+    [window.localStorage, window.sessionStorage].forEach(store => {
+      try {
+        for (let i = store.length - 1; i >= 0; i--) {
+          const k = store.key(i), v = store.getItem(k);
+          if (!k || (!k.startsWith("gc-") && !/photo|image|img|snapshot|picture/i.test(k))) continue; // only GuideCart's own data
+          if (!looksLikePhoto(k, v)) continue;
+          let at = 0; try { at = JSON.parse(v).at || 0; } catch (_) {}
+          // a dated photo record is kept for at most 7 days; anything else image-like is removed at once
+          if (!at || Date.now() - at > PHOTO_MAX_AGE) store.removeItem(k);
+        }
+      } catch (_) {}
+    });
+    try { localStorage.setItem("gc-retention-checked", String(Date.now())); } catch (_) {}
+  }
+  enforcePhotoRetention();
+  setInterval(enforcePhotoRetention, 3600e3);
 
   let items = load("items", [{ name: "milk", done: false }, { name: "eggs", done: false }, { name: "bananas", done: false }, { name: "carrots", done: false }]);
   const settings = Object.assign({ voice: "app", size: "1", theme: "system", contrast: "standard", motion: "normal", onboarded: false }, load("settings", {}));
@@ -518,7 +546,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   const SCREENS = ["onboarding", "home", "list", "shop", "settings"];
   let current = "home";
   function go(name) {
-    if (current === "shop" && name !== "shop") stopCamera(true);
+    if (current === "shop" && name !== "shop") { stopCamera(true); clearPhoto(); }
     current = name;
     SCREENS.forEach(s => { $("s-" + s).hidden = s !== name; });
     document.querySelector("nav.tabs").hidden = name === "onboarding";
@@ -1531,7 +1559,18 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight; c.getContext("2d").drawImage(img, 0, 0);
     runCheck(c);
   });
-  function showPreview(url) { preview.src = url; preview.hidden = false; video.hidden = true; $("camHint").hidden = true; $("camChip").textContent = "Photo"; }
+  let previewUrl = null;
+  function clearPhoto() {
+    if (previewUrl) { try { URL.revokeObjectURL(previewUrl); } catch (_) {} previewUrl = null; }
+    preview.removeAttribute("src"); preview.hidden = true;
+    if (!stream) $("camHint").hidden = false;
+  }
+  function showPreview(url) {
+    if (previewUrl && previewUrl !== url) { try { URL.revokeObjectURL(previewUrl); } catch (_) {} }
+    previewUrl = /^blob:/.test(url) ? url : null;
+    preview.src = url; preview.hidden = false; video.hidden = true; $("camHint").hidden = true; $("camChip").textContent = "Photo";
+  }
+  document.addEventListener("visibilitychange", () => { if (document.hidden) clearPhoto(); });
 
   // Sample photos: real images drawn in code and read by the real AI service (never a canned answer)
   function canvasOf(w, h, bg) { const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d"); g.fillStyle = bg; g.fillRect(0, 0, w, h); return [c, g]; }
