@@ -1061,11 +1061,17 @@ Reply with ONLY JSON:
   let viaGlasses = false;
   async function startCamera() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { noLiveCamera("no-api"); return false; }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 } }, audio: false });
-    } catch (e) { noLiveCamera(e && e.name === "NotAllowedError" ? "denied" : "blocked"); return false; }
+    // Some phones refuse the detailed request, so fall back to simpler ones
+    const tries = [{ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 } }, audio: false }, { video: { facingMode: { ideal: "environment" } }, audio: false }, { video: true, audio: false }];
+    let lastErr = null; stream = null;
+    for (const c of tries) {
+      try { stream = await navigator.mediaDevices.getUserMedia(c); break; }
+      catch (e) { lastErr = e; if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) break; }
+    }
+    if (!stream) { noLiveCamera(lastErr && (lastErr.name === "NotAllowedError" || lastErr.name === "SecurityError") ? "denied" : lastErr && lastErr.name === "NotReadableError" ? "busy" : "blocked"); return false; }
+    stream.getVideoTracks().forEach(tr => tr.addEventListener("ended", () => { if (stream) { stopCamera(true); status("info", "Camera stopped. Tap Live camera to start again."); } }));
     video.srcObject = stream; video.hidden = false; preview.hidden = true; $("camHint").hidden = true;
-    await video.play().catch(() => {});
+    try { await video.play(); } catch (_) { await new Promise(r => setTimeout(r, 300)); await video.play().catch(() => {}); }
     setChip(); $("camBtn").textContent = "■ Stop camera";
     $("aimBtn").hidden = false;
     if (afterCamera) status("ok", viaGlasses ? "Glasses connected." : "Camera on.", { speak: false });
@@ -1075,8 +1081,9 @@ Reply with ONLY JSON:
   }
   function noLiveCamera(why) {
     $("camChip").textContent = "Photo mode";
-    const msg = why === "denied" ? "Camera permission was refused. Allow the camera in your browser settings, or use Take photo."
-      : "The live camera isn't available here. Use Take photo instead. It works the same way.";
+    const msg = why === "denied" ? "Camera access is off. On iPhone: Settings, Safari, Camera, Allow. Or use Take photo."
+      : why === "busy" ? "Another app is using the camera. Close it, then try again. Or use Take photo."
+      : "The live camera isn't available here. Use Take photo instead.";
     status("warn", msg);
   }
   function setChip() {
@@ -1128,7 +1135,8 @@ Reply with ONLY JSON:
     stopAim();
     if (!aimOn || walking) return;
     steady = 0; aimNoneSince = Date.now();
-    const ok = await loadWalkAI();
+    await sleep(800); // let the camera picture appear first
+    const ok = mode === "find" ? !!(await loadDetector().catch(() => null)) : await loadWalkAI();
     if (!ok || !stream || walking || !aimOn) return;
     aimTimer = setInterval(aimStep, 1100);
   }
@@ -1219,7 +1227,7 @@ Reply with ONLY JSON:
     if (!detectorLoading) detectorLoading = withTimeout((async () => {
       await loadTf();
       await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js");
-      detector = await cocoSsd.load({ base: "mobilenet_v2" });
+      detector = await cocoSsd.load({ base: "lite_mobilenet_v2" });
       return detector;
     })(), 40000).catch(e => { detectorLoading = null; throw e; });
     return detectorLoading;
@@ -1229,7 +1237,7 @@ Reply with ONLY JSON:
     if (!classifierLoading) classifierLoading = withTimeout((async () => {
       await loadTf();
       await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js");
-      classifier = await mobilenet.load({ version: 2, alpha: 1.0 });
+      classifier = await mobilenet.load({ version: 2, alpha: 0.5 });
       return classifier;
     })(), 40000).catch(e => { classifierLoading = null; throw e; });
     return classifierLoading;
@@ -1469,7 +1477,11 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
   }
   // Stopping walk mode also turns the camera off, so everything goes quiet
   $("walkBtn").onclick = () => { if (walking) { stopWalk(true); stopCamera(true); status("info", "Walk mode off."); } else startWalk(); };
-  document.addEventListener("visibilitychange", () => { if (document.hidden && walking) stopWalk(true); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { if (walking) stopWalk(true); return; }
+    const tr = stream && stream.getVideoTracks()[0];
+    if (tr && tr.readyState === "ended") { stopCamera(true); if (current === "shop") startCamera(); }
+  });
 
   function grab() {
     const c = document.createElement("canvas"); c.width = video.videoWidth; c.height = video.videoHeight;
