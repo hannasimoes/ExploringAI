@@ -216,11 +216,11 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       </ul>
     </div>
     <div class="panel">
-      <h2>Using a screen reader?</h2>
-      <p class="muted">Choose how results are spoken. You can change this later in Settings.</p>
+      <h2>How should GuideCart talk?</h2>
+      <p class="muted">Most people should pick "Speak to me". Only pick the second option if VoiceOver or TalkBack is already switched on, otherwise you won't hear anything. You can change this in Settings.</p>
       <div class="seg" role="group" aria-label="How results are spoken">
-        <button type="button" data-voice="app">App voice</button>
-        <button type="button" data-voice="sr">VoiceOver / TalkBack</button>
+        <button type="button" data-voice="app">🔊 Speak to me</button>
+        <button type="button" data-voice="sr">I use VoiceOver</button>
       </div>
     </div>
     <button type="button" class="primary" id="onbDone">Get started</button>
@@ -229,6 +229,10 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   <!-- HOME -->
   <section class="screen" id="s-home" hidden aria-labelledby="home-h">
     <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="currentColor"/><path d="M8 11h2l2.4 9.2h9.2L24 13H12" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13.5" cy="24" r="1.6" fill="#fff"/><circle cx="20.5" cy="24" r="1.6" fill="#fff"/></svg>GuideCart AI</div>
+    <div class="notice" id="quietNotice" hidden>
+      <span>🔇 GuideCart is set to stay quiet and let VoiceOver read. Not using VoiceOver?</span>
+      <div class="acts"><button type="button" class="primary" id="quietFix">Turn on GuideCart's voice</button></div>
+    </div>
     <div class="hero">
       <h1 id="home-h">Ready to shop?</h1>
       <p id="homeSummary">Your list is empty.</p>
@@ -397,7 +401,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-23 (update 4)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-26 (update 5)</p>
   </section>
 </div>
 
@@ -527,19 +531,31 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     root.classList.toggle("reduce", settings.motion === "reduced");
     document.querySelectorAll("[data-set]").forEach(b => b.setAttribute("aria-pressed", String(settings[b.dataset.set] === b.dataset.val)));
     document.querySelectorAll("[data-voice]").forEach(b => b.setAttribute("aria-pressed", String(settings.voice === b.dataset.voice)));
+    const qn = document.getElementById("quietNotice");
+    if (qn) { qn.hidden = settings.voice === "app"; qn.querySelector("span").textContent = settings.voice === "off" ? "🔇 GuideCart's voice is off." : "🔇 GuideCart is set to stay quiet and let VoiceOver read. Not using VoiceOver?"; }
     keep("settings", settings);
   }
   document.querySelectorAll("[data-set]").forEach(b => b.addEventListener("click", () => {
     settings[b.dataset.set] = b.dataset.val; applySettings();
     if (b.dataset.set === "voice") say(b.dataset.val === "off" ? "" : "Spoken results set to " + b.textContent + ".");
   }));
-  document.querySelectorAll("[data-voice]").forEach(b => b.addEventListener("click", () => { settings.voice = b.dataset.voice; applySettings(); }));
+  // Speaks with the app's own voice whatever the setting (used for confirmations and Test voice)
+  function sayDirect(text) {
+    if (!window.speechSynthesis) return;
+    try { speechSynthesis.cancel(); } catch (_) {}
+    setTimeout(() => { const u = new SpeechSynthesisUtterance(text); u.lang = "en-GB"; if (voice) u.voice = voice; speechSynthesis.speak(u); }, 150);
+  }
+  document.querySelectorAll("[data-voice]").forEach(b => b.addEventListener("click", () => {
+    settings.voice = b.dataset.voice; applySettings();
+    sayDirect(settings.voice === "sr" ? "OK. GuideCart will stay quiet and VoiceOver will read for you. If you hear nothing, choose Speak to me." : "OK. I'll speak to you.");
+  }));
+  $("quietFix").onclick = () => { settings.voice = "app"; applySettings(); sayDirect("Voice on. I'll speak to you."); };
   $("testVoice").onclick = () => {
     const n = $("voiceNote");
     if (!window.speechSynthesis) { n.textContent = "This viewer can't produce speech. Open GuideCart in Safari, or turn on VoiceOver and choose Screen reader above."; return; }
-    if (settings.voice !== "app") { n.textContent = `Spoken results are set to "${settings.voice === "sr" ? "Screen reader" : "Off"}". Choose App voice above to hear GuideCart's own voice.`; return; }
-    n.textContent = "No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up.";
-    say("This is whole milk, 1 litre.");
+    n.textContent = settings.voice === "app" ? "No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up."
+      : `Spoken results are set to "${settings.voice === "sr" ? "Screen reader" : "Off"}", so GuideCart stays quiet in normal use. Choose App voice above to hear GuideCart all the time.`;
+    sayDirect("This is whole milk, 1 litre.");
   };
 
   // ---------- Navigation ----------
