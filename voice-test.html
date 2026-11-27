@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GuideCart voice test</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 24px; background: #f6f8fb; color: #13233a; }
+  h1 { font-size: 1.5rem; }
+  button { display: block; width: 100%; min-height: 72px; margin: 12px 0; font-size: 1.2rem; font-weight: 700; border-radius: 16px; border: 2px solid #005a9c; background: #005a9c; color: #fff; }
+  button.alt { background: #fff; color: #005a9c; }
+  pre { white-space: pre-wrap; background: #fff; border-radius: 12px; padding: 12px; font-size: .95rem; }
+</style>
+</head>
+<body>
+<h1>Voice test</h1>
+<p>This page has nothing from the GuideCart app. It only speaks when you tap.</p>
+<button id="a">🔊 Speak (default voice)</button>
+<button id="b" class="alt">🔊 Speak (British voice)</button>
+<pre id="log">Tap a button.</pre>
+<script>
+  const log = (s) => { document.getElementById("log").textContent += "\n" + s; };
+  function speak(useVoice) {
+    document.getElementById("log").textContent = "";
+    if (!window.speechSynthesis) { log("Speech is NOT supported here."); return; }
+    const vs = speechSynthesis.getVoices();
+    log("Voices: " + vs.length + " · English: " + vs.filter(v => /^en/i.test(v.lang)).length);
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance("Hello. This is the GuideCart voice test.");
+    u.lang = "en-GB";
+    if (useVoice) { const v = vs.find(v => /en[-_]GB/i.test(v.lang)); if (v) { u.voice = v; log("Using voice: " + v.name); } else log("No British voice found."); }
+    u.onstart = () => log("✓ Started");
+    u.onend = () => log("✓ Finished. Heard nothing? Check the silent switch and volume.");
+    u.onerror = (e) => log("✕ Error: " + e.error);
+    speechSynthesis.speak(u);
+    setTimeout(() => { if (!/Started|Error/.test(document.getElementById("log").textContent)) log("✕ Nothing started after 3 seconds."); }, 3000);
+  }
+  document.getElementById("a").onclick = () => speak(false);
+  document.getElementById("b").onclick = () => speak(true);
+</script>
+</body>
+</html>

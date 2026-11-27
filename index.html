@@ -403,7 +403,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 6)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 8)</p>
   </section>
 </div>
 
@@ -1434,18 +1434,60 @@ Reply with ONLY JSON:
     }).catch(() => {}).finally(() => { readingObject = false; });
   }
   // One model per step, then a pause, so taps (like Stop) always get through
+  // ---------- Obstacle warnings: fast, and always first ----------
+  // Anything large in the middle of the picture counts as close. Checked on every walk step (and
+  // alongside Claude), it interrupts other speech and repeats while the object stays close.
+  const nearStreak = {};
+  let lastWarn = { key: "", t: 0 };
+  function checkObstacles(all) {
+    const W = video.videoWidth, H = video.videoHeight;
+    if (!W || !H) return false;
+    let best = null;
+    all.forEach(p => {
+      if (p.score < 0.45) return;
+      const [x, , w, h] = p.bbox, cx = (x + w / 2) / W, area = (w * h) / (W * H), wide = w / W;
+      if (cx < 0.15 || cx > 0.85) return; // only what is in your path
+      const lvl = (area > 0.45 || wide > 0.75) ? 2 : (area > 0.2 || wide > 0.5) ? 1 : 0;
+      if (!lvl) return;
+      const name = (HIGH_BAR.has(p.class) && p.score < 0.75) ? "something" : bare(COCO_NAMES[p.class] || p.class);
+      if (!best || lvl > best.lvl || (lvl === best.lvl && area > best.area)) best = { name, lvl, area, cx };
+    });
+    const key = best ? best.name + ":" + best.lvl : "";
+    Object.keys(nearStreak).forEach(k => { if (k !== key) delete nearStreak[k]; });
+    if (!best) return false;
+    nearStreak[key] = (nearStreak[key] || 0) + 1;
+    if (nearStreak[key] < 2) return false; // seen in two checks in a row: avoids one-frame mistakes
+    const now = Date.now(), gap = best.lvl === 2 ? 3500 : 6000;
+    if (lastWarn.key === key && now - lastWarn.t < gap) return true;
+    lastWarn = { key, t: now };
+    const sd = short(best.cx);
+    const msg = best.lvl === 2
+      ? (sd === "ahead" ? `Stop. ${cap(best.name)} right in front of you.` : `Careful, ${best.name} very close on your ${sd}.`)
+      : (sd === "ahead" ? `Careful, ${best.name} close ahead.` : `Careful, ${best.name} close on your ${sd}.`);
+    $("statusIc").textContent = "⚠"; $("statusText").textContent = msg; $("statusBox").classList.add("error");
+    try { navigator.vibrate && navigator.vibrate(best.lvl === 2 ? [200, 80, 200] : [150]); } catch (_) {}
+    if (settings.voice === "sr") { $("live").textContent = msg; return true; }
+    if (settings.voice === "off" || !window.speechSynthesis) return true;
+    try { speechSynthesis.cancel(); } catch (_) {}
+    beep(best.lvl === 2 ? 330 : 440, 120).then(() => {
+      if (!walking) return;
+      const u = applyVoice(new SpeechSynthesisUtterance(msg)); u.rate = 1.15; speechSynthesis.speak(u);
+    });
+    return true;
+  }
   async function walkStep() {
     if (!walking || !video.videoWidth) return;
     const found = [];
     const tick = walkTick++;
     const { c, k } = smallFrame();
     try {
-      if (detector && (tick % 2 === 0 || !classifier)) {
+      if (detector && (tick % 3 !== 2 || !classifier)) {
         const all = (await detector.detect(c, 10, 0.4)).map(p => ({ ...p, bbox: p.bbox.map(v => v * k) }));
         const preds = all.filter(p => p.score >= minScore(p.class));
-        maybeReadObject(all);
         if (!walking) return;
-        const raw = preds.map(p => ({ name: COCO_NAMES[p.class] || "a " + p.class, cls: p.class, x: (p.bbox[0] + p.bbox[2] / 2) / video.videoWidth, near: (p.bbox[2] * p.bbox[3]) / (video.videoWidth * video.videoHeight) > 0.35 }));
+        warnedNow = checkObstacles(all);
+        if (!warnedNow) maybeReadObject(all);
+        const raw = preds.map(p => ({ name: COCO_NAMES[p.class] || "a " + p.class, cls: p.class, x: (p.bbox[0] + p.bbox[2] / 2) / video.videoWidth, near: false }));
         const ok = confirmed(raw, "det"), okCls = new Set(ok.map(o => o.cls));
         drawBoxes(preds.filter(p => okCls.has(p.class)));
         found.push(...ok); lastSeen.det = ok.map(o => o.name);
@@ -1457,25 +1499,27 @@ Reply with ONLY JSON:
         const okc = confirmed(raw, "cls"); found.push(...okc); lastSeen.cls = okc.map(o => o.name);
       }
     } catch (_) {}
-    announceWalk(found);
+    announceWalk(found, warnedNow || Date.now() - lastWarn.t < 2500);
+    warnedNow = false;
   }
+  let warnedNow = false;
   let walkGen = 0;
   async function walkLoop(gen) {
     while (walking && gen === walkGen) {
       await walkStep();
-      await sleep(450);
+      await sleep(300);
       await nextFrame();
     }
   }
   const short = (x) => x < 0.36 ? "left" : x > 0.64 ? "right" : "ahead";
   const bare = (n) => String(n).replace(/^(a|an|the) /, "");
-  function announceWalk(found) {
+  function announceWalk(found, quiet) {
     if (!walking) return;
     // Always show everything the AI sees right now, even when it isn't spoken
     const seeing = [...new Set([...lastSeen.det, ...lastSeen.cls].map(n => n.replace(/^an? /, "")))];
     $("seeing").hidden = false;
     $("seeing").textContent = seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet";
-    if (!found.length) return;
+    if (!found.length || quiet) return; // an obstacle warning has priority
     const now = Date.now(), seenNow = {};
     found.forEach(f => { if (!seenNow[f.name]) seenNow[f.name] = f; });
     const fresh = Object.values(seenNow).filter(f => !lastHeard[f.name] || now - lastHeard[f.name] > 20000);
@@ -1506,7 +1550,21 @@ Reply with ONLY JSON:
   }
   // With Claude Vision, walk mode sends a small frame every few seconds and Claude describes what's new
   let lastScene = "";
+  async function proximityLoop(gen) {
+    await loadDetector().catch(() => null);
+    while (walking && gen === walkGen) {
+      if (detector && video.videoWidth) {
+        try {
+          const { c, k } = smallFrame();
+          const all = (await detector.detect(c, 8, 0.45)).map(p => ({ ...p, bbox: p.bbox.map(v => v * k) }));
+          if (walking && gen === walkGen) checkObstacles(all);
+        } catch (_) {}
+      }
+      await sleep(350);
+    }
+  }
   async function claudeWalkLoop(gen) {
+    proximityLoop(gen);
     while (walking && gen === walkGen) {
       const t0 = Date.now();
       try {
@@ -1524,7 +1582,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
           const seeing = Array.isArray(r.seeing) ? r.seeing.slice(0, 8) : [];
           $("seeing").hidden = false; $("seeing").textContent = seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet";
           const msg = String(r.say || "").trim();
-          if (msg && norm(msg) !== norm(lastScene)) {
+          if (msg && norm(msg) !== norm(lastScene) && Date.now() - lastWarn.t > 2500) { // a fresh obstacle warning wins
             lastScene = msg;
             $("statusIc").textContent = r.on_list && r.on_list !== "null" ? "★" : "🚶"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
             if (r.on_list && r.on_list !== "null") { try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {} }
@@ -1950,7 +2008,24 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     });
     try { b.on("webchat:closed", () => { typedChat = false; }); } catch (_) {}
   }
-  const hookTimer = setInterval(() => { hookBotpress(); if (bpHooked) clearInterval(hookTimer); }, 1000);
+  // Botpress loads only when the shopper taps Talk or Type, so it can't affect the rest of the app
+  const BP_SCRIPTS = ["https://cdn.botpress.cloud/webchat/v5.0/inject.js", "https://files.bpcontent.cloud/2026/11/23/10/20261123104400-KIFCB9RY.js"];
+  let bpLoading = null;
+  function ensureBotpress() {
+    const ready = () => { const b = bp(); return b && typeof b.open === "function" && typeof b.sendMessage === "function"; };
+    if (ready()) { hookBotpress(); return Promise.resolve(true); }
+    if (!bpLoading) bpLoading = (async () => {
+      for (const src of BP_SCRIPTS) await loadScript(src);
+      const t0 = Date.now();
+      while (!ready() && Date.now() - t0 < 10000) await new Promise(r => setTimeout(r, 200));
+      if (!ready()) throw new Error("botpress");
+      hookBotpress();
+      // give the chat a moment to finish starting up
+      await new Promise(r => { let done = false; try { bp().on("webchat:ready", () => { if (!done) { done = true; r(); } }); } catch (_) {} setTimeout(() => { if (!done) { done = true; r(); } }, 2500); });
+      return true;
+    })().catch(e => { bpLoading = null; return false; });
+    return bpLoading;
+  }
   function setTalkButtons(on, label) {
     document.querySelectorAll("[data-talk]").forEach(x => { x.setAttribute("aria-pressed", String(on)); x.textContent = label || (on ? "■ Stop talking" : "🎤 Talk to GuideCart"); });
   }
@@ -2020,21 +2095,24 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     showTurn("bot", answer);
     speakThen(answer, () => { if (!talking) return; if (settings.voice === "sr") { stopTalking(); return; } talkTurn(); });
   }
-  document.querySelectorAll("[data-talk]").forEach(btn => btn.addEventListener("click", () => {
+  document.querySelectorAll("[data-talk]").forEach(btn => btn.addEventListener("click", async () => {
     if (talking) { stopTalking("Stopped."); return; }
-    const b = bp();
-    if (!b || typeof b.sendMessage !== "function") { say("The assistant is still loading. Try again in a moment."); return; }
     if (!SR) { say("Voice isn't available here. Tap Type instead."); return; }
+    if (!bp() || typeof bp().sendMessage !== "function") {
+      setTalkButtons(true, "⏳ Starting…");
+      const ok = await ensureBotpress();
+      setTalkButtons(false);
+      if (!ok) { say("The assistant isn't available right now. Check your internet and try again."); return; }
+    }
     hookBotpress(); hush();
     talking = true; typedChat = false; silentTurns = 0; setTalkButtons(true);
     if (stream || walking) { stopWalk(true); stopCamera(true); }
     talkTurn();
   }));
   // Type instead: opens the written chat; replies are still read aloud
-  document.querySelectorAll("[data-ask]").forEach(btn => btn.addEventListener("click", () => {
+  document.querySelectorAll("[data-ask]").forEach(btn => btn.addEventListener("click", async () => {
+    if (!(await ensureBotpress())) { say("The assistant isn't available right now. Check your internet and try again."); return; }
     const b = bp();
-    if (!b || typeof b.open !== "function") { say("The assistant is still loading. Try again in a moment."); return; }
-    hookBotpress();
     try { b.open(); } catch (_) { say("The assistant isn't ready yet. Try again in a moment."); return; }
     typedChat = true;
   }));
@@ -2048,8 +2126,5 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
 })();
 </script>
 
-<!-- Ask GuideCart chat agent (Botpress) -->
-<script src="https://cdn.botpress.cloud/webchat/v5.0/inject.js"></script>
-<script src="https://files.bpcontent.cloud/2026/11/23/10/20261123104400-KIFCB9RY.js" defer></script>
 </body>
 </html>
