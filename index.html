@@ -160,6 +160,12 @@ ul.items button { width: 48px; min-height: 48px; height: 48px; padding: 0; borde
 .talkBtn[aria-pressed="true"] { background: var(--alert) !important; border-color: var(--alert) !important; color: #ffffff !important; }
 .typeBtn { min-height: 48px; font-size: .95rem; }
 .bpFab, #fab-root, .bpWebchat-fab { bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important; }
+.welcome { position: fixed; inset: 0; z-index: 50; width: 100%; height: 100%; min-height: 100%; border: none; border-radius: 0; margin: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; text-align: center;
+  background: var(--primary); color: var(--primary-ink); padding: calc(24px + env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-right, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)) max(24px, env(safe-area-inset-left, 0px)); }
+.welcome .wl-brand { font-family: var(--display); font-size: 2.4rem; font-weight: 700; }
+.welcome .wl-text { font-size: 1.4rem; line-height: 1.4; max-width: 24ch; }
+.welcome .wl-tap { font-size: 1.1rem; font-weight: 700; border: 2px solid currentColor; border-radius: 999px; padding: 10px 22px; }
 .label-card { border: 2px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 10px; }
 .label-card.best { border: 3px solid var(--primary); }
 .fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
@@ -227,6 +233,11 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   </section>
 
   <!-- HOME -->
+  <button type="button" id="welcome" class="welcome" hidden aria-label="Welcome to your GuideCart. If you need any help, please use our chat. Tap anywhere to start.">
+    <span class="wl-brand">GuideCart</span>
+    <span class="wl-text">Welcome to your GuideCart!<br>If you need any help, please use our chat.</span>
+    <span class="wl-tap">Tap anywhere to start</span>
+  </button>
   <section class="screen" id="s-home" hidden aria-labelledby="home-h">
     <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="currentColor"/><path d="M8 11h2l2.4 9.2h9.2L24 13H12" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13.5" cy="24" r="1.6" fill="#fff"/><circle cx="20.5" cy="24" r="1.6" fill="#fff"/></svg>GuideCart AI</div>
     <div class="notice" id="quietNotice" hidden>
@@ -403,7 +414,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 8)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 10)</p>
   </section>
 </div>
 
@@ -507,7 +518,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const el = e.target.closest("button, label.btn");
     if (!el || el.disabled) return;
     if (el.matches("label.btn") && e.target.tagName === "INPUT") return;
-    if (el.id === "micBtn" || el.hasAttribute("data-talk")) return;
+    if (el.id === "micBtn" || el.id === "welcome" || el.hasAttribute("data-talk")) return;
     say(controlName(el), { echo: true });
   }, true);
   document.addEventListener("focusin", (e) => {
@@ -600,7 +611,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   }
   document.querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click", () => go(b.dataset.tab)));
   document.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => go(b.dataset.go)));
-  $("onbDone").onclick = () => { settings.onboarded = true; applySettings(); go("home"); say("Welcome to GuideCart."); };
+  $("onbDone").onclick = () => { settings.onboarded = true; applySettings(); go("home"); say("Welcome to your GuideCart! If you need any help, please use our chat."); };
   $("showOnb").onclick = () => go("onboarding");
   $("histClear").onclick = () => { purchases = []; keep("history", purchases); renderHistNote(); renderHome(); say("History cleared."); };
   $("histSample").onclick = () => { purchases = seedHistory().concat(purchases.filter(p => !p.sample)); keep("history", purchases); renderHistNote(); renderHome(); say("Sample history loaded."); };
@@ -1518,7 +1529,7 @@ Reply with ONLY JSON:
     // Always show everything the AI sees right now, even when it isn't spoken
     const seeing = [...new Set([...lastSeen.det, ...lastSeen.cls].map(n => n.replace(/^an? /, "")))];
     $("seeing").hidden = false;
-    $("seeing").textContent = seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet";
+    $("seeing").textContent = (detector ? "⚠ Obstacle check on · " : "⚠ Obstacle check starting… · ") + (seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet");
     if (!found.length || quiet) return; // an obstacle warning has priority
     const now = Date.now(), seenNow = {};
     found.forEach(f => { if (!seenNow[f.name]) seenNow[f.name] = f; });
@@ -1551,7 +1562,9 @@ Reply with ONLY JSON:
   // With Claude Vision, walk mode sends a small frame every few seconds and Claude describes what's new
   let lastScene = "";
   async function proximityLoop(gen) {
+    $("seeing").hidden = false; $("seeing").textContent = "⚠ Obstacle check starting…";
     await loadDetector().catch(() => null);
+    if (walking && gen === walkGen && !detector) { $("seeing").textContent = "⚠ Obstacle check unavailable: check the internet connection."; }
     while (walking && gen === walkGen) {
       if (detector && video.videoWidth) {
         try {
@@ -1580,7 +1593,7 @@ Be brief, like a sighted friend whispering. At most 8 words, in the form "Chair,
 JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "names", "of", "things", "in", "view"], "on_list": "list item seen, or null"}`, c, { fast: true });
           if (!walking || gen !== walkGen) return;
           const seeing = Array.isArray(r.seeing) ? r.seeing.slice(0, 8) : [];
-          $("seeing").hidden = false; $("seeing").textContent = seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet";
+          $("seeing").hidden = false; $("seeing").textContent = (detector ? "⚠ Obstacle check on · " : "⚠ Obstacle check starting… · ") + (seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet");
           const msg = String(r.say || "").trim();
           if (msg && norm(msg) !== norm(lastScene) && Date.now() - lastWarn.t > 2500) { // a fresh obstacle warning wins
             lastScene = msg;
@@ -2008,11 +2021,11 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     });
     try { b.on("webchat:closed", () => { typedChat = false; }); } catch (_) {}
   }
-  // Botpress loads only when the shopper taps Talk or Type, so it can't affect the rest of the app
+  // Botpress loads a few seconds after the app opens, so its chat bubble is there when needed
   const BP_SCRIPTS = ["https://cdn.botpress.cloud/webchat/v5.0/inject.js", "https://files.bpcontent.cloud/2026/11/23/10/20261123104400-KIFCB9RY.js"];
   let bpLoading = null;
   function ensureBotpress() {
-    const ready = () => { const b = bp(); return b && typeof b.open === "function" && typeof b.sendMessage === "function"; };
+    const ready = () => { const b = bp(); return b && typeof b.open === "function"; };
     if (ready()) { hookBotpress(); return Promise.resolve(true); }
     if (!bpLoading) bpLoading = (async () => {
       for (const src of BP_SCRIPTS) await loadScript(src);
@@ -2055,16 +2068,25 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     setTimeout(fin, 2500 + text.length * 85);
   }
   function showTurn(who, text) { $("statusIc").textContent = who === "you" ? "🎤" : "💬"; $("statusText").textContent = (who === "you" ? "You: " : "GuideCart: ") + text; $("statusBox").classList.remove("error"); }
+  let listening = false;
   function listenOnce() {
     return new Promise(res => {
       let rec; try { rec = new SR(); } catch (_) { res({ err: "no-sr" }); return; }
-      let heard = "", err = null;
-      rec.lang = "en-GB"; rec.interimResults = false; rec.continuous = false;
-      rec.onresult = (e) => { heard = Array.from(e.results).map(x => x[0].transcript).join(" ").trim(); };
+      let heard = "", err = null, silenceT = null, capT = null;
+      rec.lang = "en-GB"; rec.interimResults = true; rec.continuous = true;
+      rec.onresult = (e) => {
+        let txt = "";
+        for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript + " ";
+        heard = txt.replace(/\s+/g, " ").trim();
+        if (heard) showTurn("you", heard + " …");
+        clearTimeout(silenceT); silenceT = setTimeout(() => { try { rec.stop(); } catch (_) {} }, 1800); // a pause sends it
+      };
       rec.onerror = (e) => { err = e && e.error; };
-      rec.onend = () => { talkRec = null; res({ text: heard, err }); };
-      talkRec = rec;
-      try { rec.start(); } catch (_) { talkRec = null; res({ err: "not-allowed" }); }
+      let ended = false;
+      rec.onend = () => { if (ended) return; ended = true; clearTimeout(silenceT); clearTimeout(capT); listening = false; talkRec = null; res({ text: heard, err }); };
+      talkRec = rec; listening = true;
+      capT = setTimeout(() => { try { rec.stop(); } catch (_) {} }, 20000); // at most 20 seconds per question
+      try { rec.start(); } catch (_) { listening = false; talkRec = null; res({ err: "not-allowed" }); }
     });
   }
   let talkRec = null;
@@ -2078,7 +2100,9 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     if (!talking) return;
     await beep();
     if (!talking) return;
+    setTalkButtons(true, "✓ Done, send");
     const r = await listenOnce();
+    setTalkButtons(true);
     if (!talking) return;
     if (r.err === "not-allowed" || r.err === "service-not-allowed") { stopTalking("Microphone access is off. Allow it in Settings, or tap Type instead."); return; }
     if (!r.text) { silentTurns++; if (silentTurns >= 2) { stopTalking("Talk to GuideCart is off."); return; } setTimeout(talkTurn, 200); return; }
@@ -2096,14 +2120,16 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     speakThen(answer, () => { if (!talking) return; if (settings.voice === "sr") { stopTalking(); return; } talkTurn(); });
   }
   document.querySelectorAll("[data-talk]").forEach(btn => btn.addEventListener("click", async () => {
+    if (talking && listening && talkRec) { try { talkRec.stop(); } catch (_) {} return; } // "Done, send"
     if (talking) { stopTalking("Stopped."); return; }
     if (!SR) { say("Voice isn't available here. Tap Type instead."); return; }
-    if (!bp() || typeof bp().sendMessage !== "function") {
+    if (!bp() || typeof bp().open !== "function") {
       setTalkButtons(true, "⏳ Starting…");
       const ok = await ensureBotpress();
       setTalkButtons(false);
       if (!ok) { say("The assistant isn't available right now. Check your internet and try again."); return; }
     }
+    if (typeof bp().sendMessage !== "function") { try { bp().open(); } catch (_) {} say("Voice chat isn't ready. Type your question in the chat."); return; }
     hookBotpress(); hush();
     talking = true; typedChat = false; silentTurns = 0; setTalkButtons(true);
     if (stream || walking) { stopWalk(true); stopCamera(true); }
@@ -2121,6 +2147,19 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
   applySettings();
   renderList(); renderHome(); renderCompare(); renderHistNote();
   go(settings.onboarded ? "home" : "onboarding");
+  setTimeout(() => { ensureBotpress(); }, 2500);
+  // Welcome screen each time the app opens. Phones only allow speech after a tap, so the welcome
+  // is spoken when the shopper taps anywhere on it.
+  if (settings.onboarded) {
+    const w = $("welcome"); w.hidden = false;
+    w.addEventListener("click", () => {
+      w.hidden = true;
+      if (settings.voice === "app") sayDirect("Welcome to your GuideCart! If you need any help, please use our chat.");
+      else if (settings.voice === "sr") $("live").textContent = "Welcome to your GuideCart! If you need any help, please use our chat.";
+      const h = $("home-h"); if (h) h.focus({ preventScroll: true });
+    }, { once: true });
+    setTimeout(() => { try { w.focus(); } catch (_) {} }, 100);
+  }
   // Exposed for the arithmetic test (A04)
   window.GuideCartMath = { perUnit, compareTwo };
 })();
