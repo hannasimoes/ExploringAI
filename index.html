@@ -166,6 +166,12 @@ ul.items button { width: 48px; min-height: 48px; height: 48px; padding: 0; borde
 .welcome .wl-brand { font-family: var(--display); font-size: 2.4rem; font-weight: 700; }
 .welcome .wl-text { font-size: 1.4rem; line-height: 1.4; max-width: 24ch; }
 .welcome .wl-tap { font-size: 1.1rem; font-weight: 700; border: 2px solid currentColor; border-radius: 999px; padding: 10px 22px; }
+.talkpanel { position: fixed; left: 0; right: 0; bottom: calc(86px + env(safe-area-inset-bottom, 0px)); z-index: 30; background: var(--surface); border-top: 3px solid var(--primary); box-shadow: 0 -6px 20px rgba(0,0,0,.15);
+  display: grid; gap: 10px; padding: 12px max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px)); max-height: 60vh; }
+.tp-log { overflow: auto; display: grid; gap: 6px; max-height: 32vh; }
+.tp-log p { margin: 0; padding: 8px 12px; border-radius: 12px; background: var(--soft); overflow-wrap: anywhere; }
+.tp-log p.me { background: var(--bg); border: 1px solid var(--line); }
+.applog { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px; max-height: 50vh; overflow: auto; margin: 0; }
 .label-card { border: 2px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 10px; }
 .label-card.best { border: 3px solid var(--primary); }
 .fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
@@ -383,6 +389,8 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <div class="status"><span class="ic" aria-hidden="true">✓</span><span>This is whole milk, 1 litre.</span></div>
       <button type="button" id="testVoice">🔊 Test voice</button>
       <button type="button" id="voiceCheck">🩺 Voice check</button>
+      <button type="button" id="logBtn">📋 Show app log</button>
+      <pre id="appLog" class="applog" hidden></pre>
       <p class="muted" id="voiceDiag" style="font-size:.9rem;white-space:pre-wrap" hidden></p>
       <p class="muted" id="voiceNote" style="font-size:.95rem">No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up.</p>
     </div>
@@ -414,10 +422,19 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 10)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 11)</p>
   </section>
 </div>
 
+<div class="talkpanel" id="talkPanel" hidden role="region" aria-label="Talk to GuideCart">
+  <div class="tp-log" id="talkLog" aria-live="polite"></div>
+  <form class="add" id="talkForm">
+    <label for="talkInput" class="sr">Your question</label>
+    <input id="talkInput" type="text" placeholder="Type or use the keyboard mic 🎤" autocomplete="off">
+    <button type="submit" class="primary" style="min-height:56px;font-size:1rem">Send</button>
+  </form>
+  <button type="button" id="talkClose">Close</button>
+</div>
 <nav class="tabs" aria-label="Main">
   <div class="in">
     <button type="button" data-tab="home"><span class="ti" aria-hidden="true">⌂</span>Home</button>
@@ -434,6 +451,16 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   const root = document.documentElement;
 
   // ---------- Storage ----------
+  // ---------- App log: what happened on this phone, for fixing problems ----------
+  const APPLOG = [];
+  function logEv(s) {
+    const d = new Date(), ts = d.toTimeString().slice(0, 8);
+    APPLOG.push(ts + "  " + s); if (APPLOG.length > 120) APPLOG.shift();
+    const el = document.getElementById("appLog"); if (el && !el.hidden) el.textContent = APPLOG.slice().reverse().join("\n");
+  }
+  window.addEventListener("error", (e) => logEv("ERROR " + (e.message || e.type) + (e.filename ? " @" + String(e.filename).split("/").pop() + ":" + e.lineno : "")));
+  window.addEventListener("unhandledrejection", (e) => logEv("ERROR (promise) " + ((e.reason && (e.reason.message || e.reason.code)) || e.reason)));
+  logEv("App opened · " + (navigator.standalone || matchMedia("(display-mode: standalone)").matches ? "home-screen app" : "browser") + " · " + navigator.userAgent.replace(/^.*?\(([^)]*)\).*$/, "$1"));
   const load = (k, d) => { try { const v = localStorage.getItem("gc-" + k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
   const keep = (k, v) => { try { localStorage.setItem("gc-" + k, JSON.stringify(v)); } catch (_) {} };
 
@@ -568,6 +595,14 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     settings.voice = b.dataset.voice; applySettings();
     sayDirect(settings.voice === "sr" ? "OK. GuideCart will stay quiet and VoiceOver will read for you. If you hear nothing, choose Speak to me." : "OK. I'll speak to you.");
   }));
+  $("logBtn").onclick = async () => {
+    const el = $("appLog"); el.hidden = !el.hidden;
+    $("logBtn").textContent = el.hidden ? "📋 Show app log" : "📋 Hide app log";
+    if (!el.hidden) {
+      el.textContent = APPLOG.slice().reverse().join("\n") || "Nothing logged yet.";
+      try { await navigator.clipboard.writeText(APPLOG.join("\n")); logEv("Log copied"); } catch (_) {}
+    }
+  };
   $("voiceCheck").onclick = () => {
     const out = $("voiceDiag"); out.hidden = false;
     const lines = [], add = (s) => { lines.push(s); out.textContent = lines.join("\n"); };
@@ -1004,7 +1039,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   const MODELS = { fast: ["claude-haiku-5-5", "claude-haiku-4-5", "claude-3-5-haiku-latest"], smart: ["claude-sonnet-5-5", "claude-sonnet-4-5", "claude-3-5-sonnet-latest"] };
   const goodModel = { fast: null, smart: null };
   let lastApiError = "";
-  async function apiCall(content, fast, maxTokens, signal) {
+  async function apiCall(content, fast, maxTokens, signal, extra) {
     const kind = fast ? "fast" : "smart", tryList = goodModel[kind] ? [goodModel[kind]] : MODELS[kind];
     for (const model of tryList) {
       let res;
@@ -1012,9 +1047,10 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
         res = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST", signal,
           headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json", "anthropic-dangerous-direct-browser-access": "true" },
-          body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: "user", content }] }),
+          body: JSON.stringify(Object.assign({ model, max_tokens: maxTokens, messages: (extra && extra.messages) || [{ role: "user", content }] }, extra && extra.system ? { system: extra.system } : {})),
         });
       } catch (_) { lastApiError = "Couldn't reach api.anthropic.com (no connection)."; throw Object.assign(new Error("network"), { code: "network" }); }
+      logEv(`Claude ${model}: HTTP ${res.status}`);
       if (res.ok) { goodModel[kind] = model; lastApiError = ""; const data = await res.json(); return { model, text: (data.content || []).map(c => c.text || "").join("") }; }
       const body = await res.text().catch(() => "");
       let msg = body; try { msg = JSON.parse(body).error.message; } catch (_) {}
@@ -1109,6 +1145,7 @@ Reply with ONLY JSON:
   }
   let readingText = "";
   function showReading(r) {
+    lastScan = { type: "text", at: Date.now(), result: { summary: r && r.summary, items: r && r.items } };
     const box = $("readResult"); box.innerHTML = "";
     if (!r || !r.readable) {
       const seen = r && r.seen && r.seen !== "null" ? `No text. I see ${r.seen}. ` : "No text found. ";
@@ -1176,6 +1213,7 @@ Reply with ONLY JSON:
       try { stream = await navigator.mediaDevices.getUserMedia(c); break; }
       catch (e) { lastErr = e; if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) break; }
     }
+    logEv(stream ? "Camera on" : "Camera failed: " + (lastErr && lastErr.name));
     if (!stream) { noLiveCamera(lastErr && (lastErr.name === "NotAllowedError" || lastErr.name === "SecurityError") ? "denied" : lastErr && lastErr.name === "NotReadableError" ? "busy" : "blocked"); return false; }
     stream.getVideoTracks().forEach(tr => tr.addEventListener("ended", () => { if (stream) { stopCamera(true); status("info", "Camera stopped. Tap Live camera to start again."); } }));
     video.srcObject = stream; video.hidden = false; preview.hidden = true; $("camHint").hidden = true;
@@ -1336,8 +1374,9 @@ Reply with ONLY JSON:
       await loadTf();
       await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js");
       detector = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+      logEv("Object finder ready");
       return detector;
-    })(), 40000).catch(e => { detectorLoading = null; throw e; });
+    })(), 40000).catch(e => { detectorLoading = null; logEv("Object finder failed: " + (e && e.message)); throw e; });
     return detectorLoading;
   }
   function loadClassifier() {
@@ -1562,6 +1601,7 @@ Reply with ONLY JSON:
   // With Claude Vision, walk mode sends a small frame every few seconds and Claude describes what's new
   let lastScene = "";
   async function proximityLoop(gen) {
+    logEv("Obstacle check starting");
     $("seeing").hidden = false; $("seeing").textContent = "⚠ Obstacle check starting…";
     await loadDetector().catch(() => null);
     if (walking && gen === walkGen && !detector) { $("seeing").textContent = "⚠ Obstacle check unavailable: check the internet connection."; }
@@ -1577,6 +1617,7 @@ Reply with ONLY JSON:
     }
   }
   async function claudeWalkLoop(gen) {
+    logEv("Walk mode with Claude started");
     proximityLoop(gen);
     while (walking && gen === walkGen) {
       const t0 = Date.now();
@@ -1621,6 +1662,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     startPhoneWalk(false);
   }
   async function startPhoneWalk(quiet) {
+    logEv("Walk mode on the phone started");
     const gen = ++walkGen;
     walking = true; lastHeard = {}; stopAim();
     $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
@@ -1875,7 +1917,9 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
   }
   const CONF = { high: ["✓", "Confident"], medium: ["~", "Probably"], low: ["?", "Not sure"] };
   const LEAD = { high: (d) => `${cap(d)}.`, medium: (d) => `Probably ${d}.`, low: (d) => `Maybe ${d}.` };
+  let lastScan = null;
   function showMatch(r) {
+    lastScan = { type: "product", at: Date.now(), result: r };
     const box = $("findResult"); box.innerHTML = "";
     if (!r || !r.readable || !r.product) {
       const seen = r && r.seen && r.seen !== "null" ? `Not sure. I see ${r.seen}. ` : "Not sure what this is. ";
@@ -1923,6 +1967,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
   let labels = { A: null, B: null };
   const nextLabel = () => !labels.A ? "A" : !labels.B ? "B" : null;
   function storeLabel(r) {
+    lastScan = { type: "price label", at: Date.now(), result: r };
     const slot = nextLabel() || "B";
     if (!r || !r.readable) {
       const seen = r && r.seen && r.seen !== "null" ? `I can see ${r.seen}, but no price I can read. ` : "I couldn't read a price. ";
@@ -2081,7 +2126,8 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
         if (heard) showTurn("you", heard + " …");
         clearTimeout(silenceT); silenceT = setTimeout(() => { try { rec.stop(); } catch (_) {} }, 1800); // a pause sends it
       };
-      rec.onerror = (e) => { err = e && e.error; };
+      rec.onerror = (e) => { err = e && e.error; logEv("Mic error: " + err); };
+      rec.onstart = () => logEv("Mic listening");
       let ended = false;
       rec.onend = () => { if (ended) return; ended = true; clearTimeout(silenceT); clearTimeout(capT); listening = false; talkRec = null; res({ text: heard, err }); };
       talkRec = rec; listening = true;
@@ -2104,33 +2150,97 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     const r = await listenOnce();
     setTalkButtons(true);
     if (!talking) return;
-    if (r.err === "not-allowed" || r.err === "service-not-allowed") { stopTalking("Microphone access is off. Allow it in Settings, or tap Type instead."); return; }
-    if (!r.text) { silentTurns++; if (silentTurns >= 2) { stopTalking("Talk to GuideCart is off."); return; } setTimeout(talkTurn, 200); return; }
+    logEv("Listening ended: " + (r.err ? "error " + r.err : r.text ? '"' + r.text + '"' : "nothing heard"));
+    if (r.err && r.err !== "no-speech" && r.err !== "aborted") { stopTalking(r.err === "not-allowed" || r.err === "service-not-allowed" ? "The microphone isn't allowed. Type your question, or use the keyboard microphone." : "I couldn't hear you. Type your question, or use the keyboard microphone."); openTalkPanel(); setTimeout(() => $("talkInput").focus(), 300); return; }
+    if (!r.text) { silentTurns++; if (silentTurns >= 2) { stopTalking("I didn't hear anything. You can type your question below."); openTalkPanel(); return; } setTimeout(talkTurn, 200); return; }
     silentTurns = 0;
     if (/^(stop|bye|goodbye|that's all|that is all|thank you|thanks|no thanks|cancel|exit)[.!]?$/i.test(r.text)) { stopTalking("Bye for now."); return; }
-    showTurn("you", r.text);
-    const b = bp(); lastAsked = r.text;
-    const reply = new Promise(res => { waitingReply = res; setTimeout(() => { if (waitingReply === res) { waitingReply = null; res(""); } }, 20000); });
-    try { b.sendMessage(r.text); } catch (_) { stopTalking("Something went wrong. Let's try again."); return; }
+    showTurn("you", r.text); addTalkLine("me", r.text);
     beep(660, 90); // "got it"
-    const answer = await reply;
+    const answer = await askAgent(r.text);
     if (!talking) return;
-    if (!answer) { stopTalking("No answer yet. Tap Talk to GuideCart to try again."); return; }
-    showTurn("bot", answer);
+    if (!answer) { stopTalking("No answer yet. Try again, or type your question."); return; }
+    showTurn("bot", answer); addTalkLine("bot", answer);
     speakThen(answer, () => { if (!talking) return; if (settings.voice === "sr") { stopTalking(); return; } talkTurn(); });
   }
+
+  // ---------- The GuideCart agent (Claude, with the app's own data) ----------
+  const AGENT_SYSTEM = `You are GuideCart, the voice assistant inside the GuideCart AI app. Most people you talk to are blind or have low vision and are shopping in a UK supermarket. Your replies are read aloud, so speak like a calm, friendly person walking next to them.
+How to speak: one or two short sentences, usually under 25 words; answer first; plain British English; prices in pounds and pence; never refer to anything visual ("see", "the blue button"); describe places by position (first, second, top, bottom, left, right); no lists, emojis or markdown.
+You can see the person's shopping list, purchase history and the last thing they scanned, given below as APP DATA. Use it.
+You can change the shopping list, but ONLY after the person has clearly agreed. First ask ("Remove bread from your list?"); only when they say yes in their next message, return the action.
+The app layout: bottom bar from left to right: Home, My list, Shop, Settings. Shop has three modes at the top: Find product, Compare prices, Read text; then the camera, the big Check button, Live camera, Take photo, Walk mode and Sample photo.
+Safety: never invent product details; if you don't know, say so and suggest Check product, reading the label or asking staff. Never say a product is safe for an allergy; always add "Please double-check the label or ask staff." Say when you're not sure. You can't guide people around the shop or warn about obstacles yourself; Walk mode can warn about things close ahead, but they should still use their cane, guide dog or ask staff. Never talk about API keys, credit, servers or errors.
+Reply with ONLY a JSON object: {"say": "what to say aloud", "action": null or {"type": "add_items" | "remove_items" | "mark_bought", "items": ["item names"]}}`;
+  const agentTurns = [];
+  function appData() {
+    return JSON.stringify({
+      list_to_get: pending().map(i => i.name),
+      list_picked_up: items.filter(i => i.done).map(i => i.name),
+      recent_purchases: purchases.slice(0, 15).map(p => ({ name: p.name, price: p.price, days_ago: daysAgo(p.date) })),
+      last_scan: lastScan ? { what: lastScan.type, minutes_ago: Math.round((Date.now() - lastScan.at) / 60000), result: lastScan.result } : null,
+      screen: current,
+    });
+  }
+  function runAction(a) {
+    if (!a || !a.type || !Array.isArray(a.items) || !a.items.length) return;
+    const names = a.items.map(x => String(x).toLowerCase().trim()).filter(Boolean);
+    if (a.type === "add_items") { addedPhrase(names); saveItems(); }
+    else if (a.type === "remove_items") { items = items.filter(i => !names.some(n => core(i.name).some(w => core(n).includes(w)))); saveItems(); }
+    else if (a.type === "mark_bought") { items.forEach(i => { if (names.some(n => core(i.name).some(w => core(n).includes(w)))) i.done = true; }); saveItems(); }
+    logEv("Agent action: " + a.type + " " + names.join(", "));
+  }
+  // Ask the agent. Uses Claude when it's available, otherwise the Botpress chat.
+  async function askAgent(q) {
+    if (apiKey && !apiDown && !claudeVision) {
+      agentTurns.push({ role: "user", content: `APP DATA: ${appData()}\nPERSON SAID: ${q}` });
+      while (agentTurns.length > 12) agentTurns.shift();
+      try {
+        const r = await apiCall(null, true, 400, undefined, { system: AGENT_SYSTEM, messages: agentTurns });
+        let out; try { out = parseJSON(r.text); } catch (_) { out = { say: String(r.text || "").trim(), action: null }; }
+        agentTurns.push({ role: "assistant", content: r.text });
+        if (out.action) runAction(out.action);
+        return String(out.say || "").trim() || "Sorry, could you say that again?";
+      } catch (e) {
+        agentTurns.pop(); logEv("Agent error: " + (e && (e.code || e.message)));
+        if (e && ["bad_key", "no_credit", "upstream_error", "network"].includes(e.code)) visionFailed(e);
+      }
+    }
+    // Botpress chat as a backup
+    const ok = await ensureBotpress();
+    const b = bp();
+    if (ok && b && typeof b.sendMessage === "function") {
+      lastAsked = q;
+      const reply = new Promise(res => { waitingReply = res; setTimeout(() => { if (waitingReply === res) { waitingReply = null; res(""); } }, 20000); });
+      try { b.sendMessage(q); } catch (e) { logEv("Botpress send failed: " + (e && e.message)); return ""; }
+      return await reply;
+    }
+    logEv("No agent available (no Claude key, Botpress not ready)");
+    return "";
+  }
+  function addTalkLine(who, text) {
+    const p = document.createElement("p"); if (who === "me") p.className = "me";
+    p.textContent = (who === "me" ? "You: " : "GuideCart: ") + text;
+    const log = $("talkLog"); log.append(p); log.scrollTop = log.scrollHeight;
+  }
+  function openTalkPanel() { $("talkPanel").hidden = false; }
+  $("talkClose").onclick = () => { stopTalking(); $("talkPanel").hidden = true; hush(); };
+  // Typed or keyboard-dictated question: always works, even when the phone's speech recognition doesn't
+  $("talkForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const q = $("talkInput").value.trim(); if (!q) return;
+    $("talkInput").value = ""; addTalkLine("me", q);
+    const ans = await askAgent(q);
+    const say2 = ans || "The assistant isn't available right now. Try again in a moment.";
+    addTalkLine("bot", say2);
+    if (settings.voice === "sr") $("live").textContent = say2; else if (settings.voice === "app") speakThen(say2, () => {});
+  });
   document.querySelectorAll("[data-talk]").forEach(btn => btn.addEventListener("click", async () => {
     if (talking && listening && talkRec) { try { talkRec.stop(); } catch (_) {} return; } // "Done, send"
     if (talking) { stopTalking("Stopped."); return; }
-    if (!SR) { say("Voice isn't available here. Tap Type instead."); return; }
-    if (!bp() || typeof bp().open !== "function") {
-      setTalkButtons(true, "⏳ Starting…");
-      const ok = await ensureBotpress();
-      setTalkButtons(false);
-      if (!ok) { say("The assistant isn't available right now. Check your internet and try again."); return; }
-    }
-    if (typeof bp().sendMessage !== "function") { try { bp().open(); } catch (_) {} say("Voice chat isn't ready. Type your question in the chat."); return; }
-    hookBotpress(); hush();
+    openTalkPanel();
+    if (!SR) { logEv("Speech recognition not available"); say("Type your question below, or use the microphone on your keyboard."); setTimeout(() => $("talkInput").focus(), 300); return; }
+    hush();
     talking = true; typedChat = false; silentTurns = 0; setTalkButtons(true);
     if (stream || walking) { stopWalk(true); stopCamera(true); }
     talkTurn();
@@ -2148,6 +2258,24 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
   renderList(); renderHome(); renderCompare(); renderHistNote();
   go(settings.onboarded ? "home" : "onboarding");
   setTimeout(() => { ensureBotpress(); }, 2500);
+  // Check for a newer version and reload once, so phones don't keep an old copy
+  const MY_VERSION = (document.body.innerHTML.match(/GuideCart version ([^<]+)</) || [])[1] || "";
+  async function checkForUpdate() {
+    try {
+      const last = +(sessionStorage.getItem("gc-upd") || 0);
+      if (Date.now() - last < 120000) return;
+      const res = await fetch(location.pathname + "?check=" + Date.now(), { cache: "no-store" });
+      if (!res.ok) return;
+      const live = ((await res.text()).match(/GuideCart version ([^<]+)</) || [])[1] || "";
+      logEv("Version here: " + MY_VERSION + " · online: " + (live || "?"));
+      if (live && MY_VERSION && live !== MY_VERSION && !talking && !walking && !stream) {
+        sessionStorage.setItem("gc-upd", String(Date.now()));
+        location.replace(location.pathname + "?v=" + encodeURIComponent(live) + location.hash);
+      }
+    } catch (e) { logEv("Update check failed: " + (e && e.message)); }
+  }
+  checkForUpdate();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) checkForUpdate(); });
   // Welcome screen each time the app opens. Phones only allow speech after a tap, so the welcome
   // is spoken when the shopper taps anywhere on it.
   if (settings.onboarded) {
