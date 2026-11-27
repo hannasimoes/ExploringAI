@@ -400,6 +400,14 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" style="font-size:.95rem">GuideCart never saves your photos. A photo stays in memory only while it is being checked, and is cleared when you leave the Shop screen or close the app. Photos taken here are not added to your Photos app. As a safety net, any photo data left on this phone is deleted within 7 days. When Smarter AI is on, a photo is sent to Claude to be read and is not stored by GuideCart.</p>
     </div>
     <div class="panel">
+      <h2>Classroom test mode</h2>
+      <p class="muted" style="font-size:.95rem">For demos without price labels: GuideCart knows today's prices for Evian still water 500ml (85p), Barebells cookies & cream protein bar (£2.50) and Rio Mare tuna in olive oil (£2.30). Point Find product at one of them.</p>
+      <div class="seg" role="group" aria-label="Classroom test mode">
+        <button type="button" data-set="testStore" data-val="on">On</button>
+        <button type="button" data-set="testStore" data-val="off">Off</button>
+      </div>
+    </div>
+    <div class="panel">
       <h2>Shopping history</h2>
       <p class="muted" style="font-size:.95rem" id="histNote"></p>
       <div class="row2">
@@ -423,7 +431,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 13)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 14)</p>
   </section>
 </div>
 
@@ -485,7 +493,18 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   setInterval(enforcePhotoRetention, 3600e3);
 
   let items = load("items", [{ name: "milk", done: false }, { name: "eggs", done: false }, { name: "bananas", done: false }, { name: "carrots", done: false }]);
-  const settings = Object.assign({ voice: "app", size: "1", theme: "system", contrast: "standard", motion: "normal", onboarded: false }, load("settings", {}));
+  const settings = Object.assign({ voice: "app", size: "1", theme: "system", contrast: "standard", motion: "normal", onboarded: false, testStore: "on" }, load("settings", {}));
+  // Classroom test mode: today's prices for products brought in without a price label
+  const TEST_STORE = [
+    { name: "Evian water", size: "500ml", price: 0.85, keys: ["evian", "still water", "mineral water"] },
+    { name: "Barebells protein bar", size: "55g", price: 2.50, keys: ["barebells", "protein bar", "cookies & cream", "cookies and cream"] },
+    { name: "Rio Mare tuna", size: "160g", price: 2.30, keys: ["rio mare", "tuna"] },
+  ];
+  function testStoreItem(text) {
+    if (settings.testStore !== "on" || !text) return null;
+    const n = String(text).toLowerCase();
+    return TEST_STORE.find(p => p.keys.some(k => n.includes(k))) || null;
+  }
 
   // ---------- Speech (M08: app voice, screen reader or off) ----------
   let voice = null, lastSaid = "";
@@ -733,21 +752,26 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   const pence = (n) => n < 1 ? Math.round(n * 100) + "p" : "£" + n.toFixed(2);
   const ago = (d) => d <= 0 ? "today" : d === 1 ? "yesterday" : d < 7 ? d + " days ago" : d < 14 ? "last week" : Math.round(d / 7) + " weeks ago";
   const daysAgo = (ts) => Math.floor((Date.now() - ts) / DAY);
+  // Sample history for demos: three shopping trips (clearly marked as sample in Settings)
+  const SEED_VERSION = 4;
   function seedHistory() {
     const d = (n) => Date.now() - n * DAY - 3600e3;
     const e = (name, price, n) => ({ name, price, date: d(n), sample: true });
     return [
-      e("semi-skimmed milk", 1.55, 7), e("semi-skimmed milk", 1.45, 14), e("semi-skimmed milk", 1.45, 21),
-      e("free range eggs", 3.35, 3), e("free range eggs", 3.20, 17),
-      e("wholemeal bread", 1.25, 7), e("wholemeal bread", 1.25, 14), e("wholemeal bread", 1.20, 21),
-      e("bananas", 0.95, 6), e("bananas", 1.05, 13),
-      e("cucumber", 0.99, 2),
-      e("salted butter", 1.85, 11), e("salted butter", 1.75, 25),
-      e("red onions", 1.00, 9),
+      // Trip 1: 3 days ago
+      e("evian water 500ml", 0.75, 3), e("barebells protein bar", 2.50, 3), e("ready salted crisps", 1.00, 3), e("apples", 1.60, 3),
+      // Trip 2: last week
+      e("evian water 500ml", 0.65, 7), e("bananas", 0.95, 7), e("rio mare tuna", 2.50, 7), e("orange juice", 1.40, 7),
+      // Trip 3: two weeks ago
+      e("evian water 500ml", 0.65, 14), e("bananas", 1.05, 14), e("barebells protein bar", 2.20, 14), e("tea bags", 1.50, 14),
     ];
   }
   let purchases = load("history", null);
-  if (!Array.isArray(purchases)) { purchases = seedHistory(); keep("history", purchases); }
+  if (!Array.isArray(purchases)) { purchases = seedHistory(); keep("history", purchases); keep("seedv", SEED_VERSION); }
+  else if (load("seedv", 0) !== SEED_VERSION && purchases.some(p => p.sample)) {
+    // replace old sample trips with the current ones; keep real purchases
+    purchases = seedHistory().concat(purchases.filter(p => !p.sample)); keep("history", purchases); keep("seedv", SEED_VERSION);
+  }
   const GENERIC = new Set("semi skimmed whole free range large small salted unsalted british fresh organic red brown white green seedless wild washed ocado premium pack pints pint litre litres the a of".split(" "));
   const core = (name) => norm(name).replace(/[^a-z ]/g, " ").split(/\s+/).filter(w => w.length > 2 && !GENERIC.has(w)).map(w => w.replace(/(es|s)$/, ""));
   function historyFor(name) {
@@ -1357,7 +1381,7 @@ Reply with ONLY JSON:
   // ---------- Walk mode: camera always on, names products as the shopper passes them ----------
   // On-phone AI, frame by frame: COCO-SSD object detection (loose fruit, veg, bottles)
   // plus Tesseract text reading (names printed on packs and shelf labels).
-  const GROCERY = "milk eggs egg bread butter cheese yogurt yoghurt cream tomatoes tomato pasta penne spaghetti rice beans coffee tea sugar flour cereal oats porridge juice water cola lemonade chocolate biscuits crisps soup tuna chicken beef ham bacon sausages fish salmon apples apple bananas banana oranges orange grapes lemons lemon limes strawberries blueberries peelers satsumas clementines carrots carrot potatoes potato onions onion broccoli cucumber lettuce salad peppers pepper mushrooms garlic avocado spinach cabbage courgette oil vinegar ketchup mayonnaise honey jam peanut noodles pizza cravendale semi skimmed whole".split(" ");
+  const GROCERY = "milk eggs egg bread butter cheese yogurt yoghurt cream tomatoes tomato pasta penne spaghetti rice beans coffee tea sugar flour cereal oats porridge juice water cola lemonade chocolate biscuits crisps soup tuna chicken beef ham bacon sausages fish salmon apples apple bananas banana oranges orange grapes lemons lemon limes strawberries blueberries peelers satsumas clementines carrots carrot potatoes potato onions onion broccoli cucumber lettuce salad peppers pepper mushrooms garlic avocado spinach cabbage courgette oil vinegar ketchup mayonnaise honey jam peanut noodles pizza cravendale semi skimmed whole evian barebells protein tuna".split(" ");
   const GROCERY_SET = new Set(GROCERY);
   const PRETTY = { semi: "semi-skimmed milk", skimmed: "skimmed milk", whole: "whole milk", cravendale: "Cravendale milk", peelers: "easy peelers", egg: "eggs", penne: "penne pasta" };
   const PRODUCT_CLASSES = new Set(["bottle", "cup", "bowl", "wine glass", "banana", "apple", "orange", "broccoli", "carrot", "sandwich", "pizza", "donut", "cake", "hot dog", "book", "vase"]);
@@ -1951,12 +1975,14 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     card.querySelector(".why").textContent = r.why_unsure && r.why_unsure !== "null" ? r.why_unsure : "";
     let spoken = (LEAD[r.confidence] || LEAD.low)(desc);
     if (r.confidence === "low" && r.guidance && r.guidance !== "null") spoken += " " + r.guidance;
-    const priceNow = num(r.price);
+    const storeItem = num(r.price) == null ? testStoreItem([r.product, r.brand].filter(ok).join(" ")) : null;
+    const priceNow = num(r.price) != null ? num(r.price) : storeItem ? storeItem.price : null;
+    if (priceNow != null) spoken += ` ${pence(priceNow)}.`;
     const ins = insightFor(match ? match.name : r.product, priceNow);
     if (ins && ins.parts.length) {
       const tl = document.createElement("div"); tl.className = "tipline";
       const ic = document.createElement("span"); ic.setAttribute("aria-hidden", "true"); ic.textContent = ins.up ? "📈" : "💡";
-      const tx = document.createElement("span"); tx.textContent = (priceNow != null ? `Now ${money(priceNow)}. ` : "") + ins.parts.join(" ");
+      const tx = document.createElement("span"); tx.textContent = (priceNow != null ? `Now ${money(priceNow)}${storeItem ? " (test store price)" : ""}. ` : "") + ins.parts.join(" ");
       tl.append(ic, tx); card.append(tl);
     }
     if (match) {
@@ -1971,7 +1997,15 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
       awaitingConfirm = true;
     } else {
       const p = document.createElement("p"); p.textContent = "This doesn't seem to be on your list.";
-      card.append(p); spoken += " Not on your list." + (ins && ins.spoken.length ? " " + ins.spoken.join(" ") : "");
+      const addB = document.createElement("button"); addB.type = "button"; addB.className = "primary"; addB.textContent = "＋ Add to my list";
+      const addName = (storeItem ? storeItem.name : r.product).toLowerCase();
+      addB.onclick = () => {
+        const res = addedPhrase([addName]); saveItems();
+        const warn = checkNewItems(res.added);
+        status(warn ? "warn" : "ok", (res.text.trim() + warn).trim());
+        if (warn) go("list");
+      };
+      card.append(p, addB); spoken += " Not on your list." + (ins && ins.spoken.length ? " " + ins.spoken.join(" ") : "");
     }
     box.append(card);
     status(match ? "ok" : "info", spoken);
@@ -2198,6 +2232,7 @@ Reply with ONLY a JSON object: {"say": "what to say aloud", "action": null or {"
       recent_purchases: purchases.slice(0, 15).map(p => ({ name: p.name, price: p.price, days_ago: daysAgo(p.date) })),
       last_scan: lastScan ? { what: lastScan.type, minutes_ago: Math.round((Date.now() - lastScan.at) / 60000), result: lastScan.result } : null,
       screen: current,
+      test_store_prices_today: settings.testStore === "on" ? TEST_STORE.map(p => ({ name: p.name, size: p.size, price: p.price })) : null,
     });
   }
   function runAction(a) {
