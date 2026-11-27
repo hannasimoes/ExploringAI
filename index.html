@@ -192,7 +192,7 @@ nav.tabs {
   background: var(--surface); border-top: 1px solid var(--line);
   padding: 8px max(10px, env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
 }
-nav.tabs .in { max-width: 560px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+nav.tabs .in { max-width: 560px; margin: 0 auto; display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
 nav.tabs button { min-height: 62px; flex-direction: column; gap: 2px; font-size: .8rem; border: none; border-radius: 14px; background: transparent; color: var(--muted); padding: 6px 4px; }
 nav.tabs button .ti { font-size: 1.35rem; line-height: 1; }
 body.has-bp nav.tabs { padding-right: calc(88px + env(safe-area-inset-right, 0px)); }
@@ -258,7 +258,8 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       w.hidden = true;
       var voice = "app"; try { voice = (JSON.parse(localStorage.getItem("gc-settings") || "{}").voice) || "app"; } catch (_) {}
       var msg = "Welcome to your GuideCart! If you need any help, please use our chat.";
-      if (voice === "app" && window.speechSynthesis) {
+      if (voice === "app" && window.speechSynthesis && window.__gcWelcomeAuto) { /* already heard it */ }
+      else if (voice === "app" && window.speechSynthesis) {
         try { if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel(); speechSynthesis.resume(); } catch (_) {}
         var u = new SpeechSynthesisUtterance(msg); u.lang = "en-GB"; u.volume = 1; u.rate = 1;
         window.__gcWelcomeSpoken = true;
@@ -267,6 +268,16 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       document.dispatchEvent(new Event("gc-welcomed"));
     };
     w.addEventListener("click", function () { window.gcWelcomeTap(); });
+    // Try to speak the welcome as soon as the blue screen opens. iPhone usually only allows speech after a tap,
+    // so if it didn't start, the tap speaks it (VoiceOver users hear it straight away from the button's label).
+    setTimeout(function () {
+      var voice = "app"; try { voice = (JSON.parse(localStorage.getItem("gc-settings") || "{}").voice) || "app"; } catch (_) {}
+      var apple = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+      if (apple || voice !== "app" || !window.speechSynthesis || w.hidden) return; // iPhone blocks it and it would jam the tap's speech
+      var u = new SpeechSynthesisUtterance("Welcome to your GuideCart! If you need any help, please use our chat. Tap anywhere to start."); u.lang = "en-GB";
+      u.onstart = function () { window.__gcWelcomeAuto = true; };
+      try { speechSynthesis.speak(u); } catch (_) {}
+    }, 400);
   })();
   </script>
   <section class="screen" id="s-home" hidden aria-labelledby="home-h">
@@ -279,7 +290,12 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <h1 id="home-h">Ready to shop?</h1>
       <p id="homeSummary">Your list is empty.</p>
       <div class="progress" aria-hidden="true"><span id="homeBar" style="width:0%"></span></div>
-      <button type="button" data-go="shop">🛒 Start shopping</button>
+      <button type="button" data-start>🛒 Start shopping</button>
+    </div>
+    <div class="panel" aria-labelledby="part2H">
+      <h2 id="part2H">🧪 Part 2: Test shopping</h2>
+      <p class="muted" style="font-size:.95rem">Try GuideCart with 3 real products that have no price label: Evian water, a Barebells protein bar and Rio Mare tuna. GuideCart knows their prices.</p>
+      <button type="button" data-go="test">🧪 Open test shopping</button>
     </div>
     <button type="button" class="askBtn talkBtn" data-talk aria-pressed="false">🎤 Talk to GuideCart</button>
     <div class="row2">
@@ -313,12 +329,30 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <h2 id="doneH">Got it</h2>
       <ul class="items" id="doneList" aria-labelledby="doneH"></ul>
     </div>
-    <button type="button" class="primary" data-go="shop">🛒 Start shopping</button>
+    <button type="button" class="primary" data-start>🛒 Start shopping</button>
+  </section>
+
+  <!-- TEST -->
+  <section class="screen" id="s-test" hidden aria-labelledby="test-h">
+    <h1 id="test-h">Test shopping</h1>
+    <div class="panel">
+      <p>Part 2 of Ready to shop. Bring these 3 products. They don't need a price label: GuideCart knows today's test prices.</p>
+      <ul class="items">
+        <li><span class="name">Evian still water, 500ml · 85p</span></li>
+        <li><span class="name">Barebells cookies &amp; cream protein bar, 55g · £2.50</span></li>
+        <li><span class="name">Rio Mare tuna in olive oil, 160g · £2.30</span></li>
+      </ul>
+      <p class="muted" style="font-size:.95rem">Start test shopping puts them on your list and turns the camera on. Hold each product in front of the camera: GuideCart says what it is, its price, and what you paid last time.</p>
+      <p class="muted" id="testState" style="font-size:.95rem;font-weight:700"></p>
+    </div>
+    <button type="button" class="primary" id="testStart">▶ Start test shopping</button>
+    <button type="button" id="testEnd">■ End test</button>
   </section>
 
   <!-- SHOP -->
   <section class="screen" id="s-shop" hidden aria-labelledby="shop-h">
     <h1 id="shop-h">Guided shopping</h1>
+    <div class="notice" id="testBanner" hidden><span>🧪 Test shopping: GuideCart knows the prices of Evian, Barebells and Rio Mare.</span><div class="acts"><button type="button" id="testEnd2">■ End test</button></div></div>
     <button type="button" class="askBtn talkBtn" data-talk aria-pressed="false">🎤 Talk to GuideCart</button>
     <div class="modes" role="group" aria-label="Mode">
       <button type="button" id="modeFind" aria-pressed="true">🔍 Find product</button>
@@ -337,7 +371,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     <p class="muted" id="frameTip">Hold one product in your hand about 30 cm from the phone, or point at the price label on the front edge of the shelf. Keep still, then tap.</p>
     <button type="button" class="primary" id="checkBtn">📷 Check product</button>
     <div class="row2">
-      <button type="button" id="camBtn">▶ Live camera</button>
+      <button type="button" id="camBtn">▶ Start camera</button>
       <label class="btn file-btn">🖼 Take photo<input id="photoInput" type="file" accept="image/*" capture="environment"></label>
     </div>
     <div class="panel" id="camChoice" hidden aria-labelledby="camChoiceH">
@@ -349,8 +383,8 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       </div>
     </div>
     <button type="button" id="aimBtn" aria-pressed="true" hidden>🎯 Aim guide: on</button>
-    <button type="button" id="walkBtn" aria-pressed="false">🚶 Walk mode: tell me what I pass</button>
-    <p class="muted" id="walkNote" style="font-size:.95rem">Walk mode keeps the camera on and tells you what's around you as you move: people, chairs, tables, bottles, fruit and other common objects. It reads the writing on bottles, packs and books, and says when something is on your list. It uses more battery. Hold the phone upright at chest height, camera facing the shelves.</p>
+    <button type="button" id="walkBtn" aria-pressed="false" hidden>🚶 Walk mode</button>
+    <p class="muted" id="walkNote" style="font-size:.95rem">While the camera is on, GuideCart talks all the time: it warns you about anything close in front of you, says what's around you, and names a product when you hold it up, with its price. Hold the phone upright at chest height.</p>
     <button type="button" id="tipsBtn">🔊 How to take a good photo</button>
     <button type="button" id="sampleBtn">🖼 Sample photo</button>
 
@@ -422,14 +456,6 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" style="font-size:.95rem">GuideCart never saves your photos. A photo stays in memory only while it is being checked, and is cleared when you leave the Shop screen or close the app. Photos taken here are not added to your Photos app. As a safety net, any photo data left on this phone is deleted within 7 days. When Smarter AI is on, a photo is sent to Claude to be read and is not stored by GuideCart.</p>
     </div>
     <div class="panel">
-      <h2>Classroom test mode</h2>
-      <p class="muted" style="font-size:.95rem">For demos without price labels: GuideCart knows today's prices for Evian still water 500ml (85p), Barebells cookies & cream protein bar (£2.50) and Rio Mare tuna in olive oil (£2.30). Point Find product at one of them.</p>
-      <div class="seg" role="group" aria-label="Classroom test mode">
-        <button type="button" data-set="testStore" data-val="on">On</button>
-        <button type="button" data-set="testStore" data-val="off">Off</button>
-      </div>
-    </div>
-    <div class="panel">
       <h2>Shopping history</h2>
       <p class="muted" style="font-size:.95rem" id="histNote"></p>
       <div class="row2">
@@ -453,7 +479,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 15)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 16)</p>
   </section>
 </div>
 
@@ -466,6 +492,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     <button type="button" data-tab="home"><span class="ti" aria-hidden="true">⌂</span>Home</button>
     <button type="button" data-tab="list"><span class="ti" aria-hidden="true">☰</span>My list</button>
     <button type="button" data-tab="shop"><span class="ti" aria-hidden="true">🛒</span>Shop</button>
+    <button type="button" data-tab="test"><span class="ti" aria-hidden="true">🧪</span>Test</button>
     <button type="button" data-tab="settings"><span class="ti" aria-hidden="true">⚙</span>Settings</button>
   </div>
 </nav>
@@ -515,7 +542,8 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   setInterval(enforcePhotoRetention, 3600e3);
 
   let items = load("items", [{ name: "milk", done: false }, { name: "eggs", done: false }, { name: "bananas", done: false }, { name: "carrots", done: false }]);
-  const settings = Object.assign({ voice: "app", size: "1", theme: "system", contrast: "standard", motion: "normal", onboarded: false, testStore: "on" }, load("settings", {}));
+  const settings = Object.assign({ voice: "app", size: "1", theme: "system", contrast: "standard", motion: "normal", onboarded: false, testStore: "off" }, load("settings", {}));
+  if (settings.testV !== 2) { settings.testStore = "off"; settings.testV = 2; }
   // Classroom test mode: today's prices for products brought in without a price label
   const TEST_STORE = [
     { name: "Evian water", size: "500ml", price: 0.85, keys: ["evian", "still water", "mineral water"] },
@@ -685,7 +713,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   };
 
   // ---------- Navigation ----------
-  const SCREENS = ["onboarding", "home", "list", "shop", "settings"];
+  const SCREENS = ["onboarding", "home", "list", "shop", "test", "settings"];
   let current = "home";
   function go(name) {
     if (current === "shop" && name !== "shop") { stopCamera(true); clearPhoto(); }
@@ -704,6 +732,26 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   document.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => go(b.dataset.go)));
   $("onbDone").onclick = () => { settings.onboarded = true; applySettings(); go("home"); say("You're all set. Tap Talk to GuideCart any time you need help."); };
   $("showOnb").onclick = () => go("onboarding");
+  // Start shopping: open Shop and start the camera guide straight away
+  document.querySelectorAll("[data-start]").forEach(b => b.addEventListener("click", () => { go("shop"); if (!stream) askCamera(null); }));
+  // Test shopping (Part 2): three products with known prices, no labels needed
+  function renderTest() {
+    const on = settings.testStore === "on";
+    $("testState").textContent = on ? "Test shopping is on." : "Test shopping is off.";
+    $("testBanner").hidden = !on; $("testEnd").hidden = !on;
+    $("testStart").textContent = on ? "▶ Continue test shopping" : "▶ Start test shopping";
+  }
+  $("testStart").onclick = () => {
+    const was = settings.testStore === "on";
+    settings.testStore = "on"; applySettings();
+    const need = ["evian water 500ml", "barebells protein bar", "rio mare tuna"].filter(n => !pending().some(i => core(i.name).some(w => core(n).includes(w))));
+    if (need.length) { need.forEach(n => items.push({ name: n, done: false })); saveItems(); }
+    renderTest(); go("shop"); setMode("find");
+    if (!was) say(need.length ? "Test shopping on. Evian, Barebells and Rio Mare are on your list." : "Test shopping on.");
+    if (!stream) askCamera(null);
+  };
+  const endTest = () => { settings.testStore = "off"; applySettings(); renderTest(); say("Test shopping off."); };
+  $("testEnd").onclick = endTest; $("testEnd2").onclick = endTest;
   $("histClear").onclick = () => { purchases = []; keep("history", purchases); renderHistNote(); renderHome(); say("History cleared."); };
   $("histSample").onclick = () => { purchases = seedHistory().concat(purchases.filter(p => !p.sample)); keep("history", purchases); renderHistNote(); renderHome(); say("Sample history loaded."); };
   function apiStatus() {
@@ -1283,9 +1331,8 @@ Reply with ONLY JSON:
     try { await video.play(); } catch (_) { await new Promise(r => setTimeout(r, 300)); await video.play().catch(() => {}); }
     setChip(); $("camBtn").textContent = "■ Stop camera";
     $("aimBtn").hidden = false;
-    if (afterCamera) status("ok", viaGlasses ? "Glasses connected." : "Camera on.", { speak: false });
-    else status("ok", viaGlasses ? "Glasses connected." : "Camera on.");
-    startAim();
+    status("ok", (viaGlasses ? "Glasses connected." : "Camera on.") + " I'll warn you about anything close and name what I see.");
+    if (!afterCamera) setTimeout(() => { if (stream && !walking) startWalk(); }, 300);
     return true;
   }
   function noLiveCamera(why) {
@@ -1296,16 +1343,17 @@ Reply with ONLY JSON:
     status("warn", msg);
   }
   function setChip() {
-    const chip = $("camChip"); chip.textContent = walking ? "● Walk mode" : "● Live";
+    const chip = $("camChip"); chip.textContent = walking ? "● Live guide" : "● Live";
     if (viaGlasses) { chip.textContent = (walking ? "🕶 Walk mode" : "🕶 Ray-Ban Meta"); const s = document.createElement("span"); s.className = "glasses-tag"; s.textContent = "preview"; chip.append(s); }
   }
   function stopCamera(silent) {
     if (stream || walking) hush();
     stopWalk(true); stopAim(); viaGlasses = false; $("aimBtn").hidden = true;
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    video.hidden = true; $("camBtn").textContent = "▶ Live camera"; $("camChip").textContent = "Camera off";
+    video.hidden = true; $("camBtn").textContent = "▶ Start camera"; $("camChip").textContent = "Camera off";
     if (preview.hidden) $("camHint").hidden = false;
     if (!silent) status("info", "Camera off.");
+    $("seeing").hidden = true;
   }
   // Ask which camera to use: phone, or Meta smart glasses (concept preview: the phone camera stands in for the glasses feed)
   let afterCamera = null; // what to start once the camera is chosen (e.g. walk mode)
@@ -1589,7 +1637,7 @@ Reply with ONLY JSON:
     return true;
   }
   async function walkStep() {
-    if (!walking || !video.videoWidth) return;
+    if (!walking || !video.videoWidth || talking || busy || awaitingConfirm) return;
     const found = [];
     const tick = walkTick++;
     const { c, k } = smallFrame();
@@ -1679,38 +1727,72 @@ Reply with ONLY JSON:
       await sleep(600);
     }
   }
+  // Obstacle warning: beep, then a short sentence. Interrupts anything else.
+  function warnNow(name, lvl, sd) {
+    const key = name + ":" + lvl, now = Date.now(), gap = lvl === 2 ? 3500 : 6000;
+    if (lastWarn.key === key && now - lastWarn.t < gap) return;
+    lastWarn = { key, t: now };
+    const msg = lvl === 2
+      ? (sd === "ahead" ? `Stop. ${cap(name)} right in front of you.` : `Careful, ${name} very close on your ${sd}.`)
+      : (sd === "ahead" ? `Careful, ${name} close ahead.` : `Careful, ${name} close on your ${sd}.`);
+    $("statusIc").textContent = "⚠"; $("statusText").textContent = msg; $("statusBox").classList.add("error");
+    logEv("Warning: " + msg);
+    if (settings.voice === "sr") { $("live").textContent = msg; return; }
+    if (settings.voice === "off" || !window.speechSynthesis) return;
+    try { speechSynthesis.cancel(); } catch (_) {}
+    beep(lvl === 2 ? 330 : 440, 120).then(() => { if (!walking) return; const u = applyVoice(new SpeechSynthesisUtterance(msg)); u.rate = 1.1; speechSynthesis.speak(u); });
+  }
+  // The live guide with Claude: one small photo about every 2 seconds. Claude says what is close,
+  // what is around, and names a product held up to the camera. Nothing runs on the phone itself.
+  let lastProduct = { key: "", t: 0 }, guideFails = 0;
   async function claudeWalkLoop(gen) {
-    logEv("Walk mode with Claude started");
-    proximityLoop(gen);
+    logEv("Live guide with Claude started");
+    $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · looking…";
     while (walking && gen === walkGen) {
+      if (!stream || busy || awaitingConfirm || talking || document.hidden || !video.videoWidth) { await sleep(600); continue; }
       const t0 = Date.now();
       try {
-        if (video.videoWidth) {
-          const c = document.createElement("canvas"); c.width = video.videoWidth; c.height = video.videoHeight;
-          c.getContext("2d").drawImage(video, 0, 0);
-          const list = pending().map(i => i.name);
-          const r = await apiVision(
-`You are the eyes of a BLIND person walking with their phone camera held at chest height. This is the current camera view.
-Their shopping list: ${JSON.stringify(list)}.
-Previously you said: ${JSON.stringify(lastScene || "nothing yet")}.
-Be brief, like a sighted friend whispering. At most 8 words, in the form "Chair, left. Person, ahead." Name at most two things, each with left, ahead or right. Put anything on their list first ("Milk, right. On your list."). Start with "Careful," for anything very close ahead. Read a sign or product name only if it is large and useful, in 3 words or fewer. If nothing has changed since what you said before, return an empty string. Only describe what you can clearly see.
-JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "names", "of", "things", "in", "view"], "on_list": "list item seen, or null"}`, c, { fast: true });
-          if (!walking || gen !== walkGen) return;
-          const seeing = Array.isArray(r.seeing) ? r.seeing.slice(0, 8) : [];
-          $("seeing").hidden = false; $("seeing").textContent = (detector ? "⚠ Obstacle check on · " : "⚠ Obstacle check starting… · ") + (seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet");
+        const vw = video.videoWidth, vh = video.videoHeight, sc = Math.min(1, 512 / Math.max(vw, vh));
+        const c = document.createElement("canvas"); c.width = Math.round(vw * sc); c.height = Math.round(vh * sc);
+        c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+        const list = pending().map(i => i.name);
+        const r = await apiVision(
+`You are the eyes of a BLIND person in a shop, holding a phone camera upright at chest height. This is the camera view right now.
+Shopping list: ${JSON.stringify(list)}. Last thing you said: ${JSON.stringify(lastScene || "nothing yet")}.
+1. Safety first. "near" is "very_close" if something in their walking path (centre or lower half of the picture) is within about one step: a person, trolley, box, chair, display stand, door, wall, step or the end of a shelf. "close" if about two steps away. Otherwise "none". Shelves along the side do not count.
+2. "product": only if ONE product is held up or clearly fills the middle of the picture and you can read or recognise it. Otherwise null.
+3. "say": what is around them, at most 8 words, each thing with left, ahead or right, e.g. "Drinks shelf, right. Person, ahead." Put list items first ("Tuna, left. On your list."). Empty string if nothing has changed since what you said last, or if you are reporting a product.
+Only describe what you can clearly see. Never invent.
+JSON: {"near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "obstacle_side": "left|ahead|right", "product": null or {"name": "2 to 4 words", "brand": "or null", "size": "as printed, or null", "price": "price in pounds if a price is visible, else null", "list_match": "matching list item, or null", "confidence": "high|medium|low"}, "say": "", "seeing": ["short names of things in view"]}`, c, { fast: true });
+        if (!walking || gen !== walkGen) return;
+        guideFails = 0;
+        const seeing = Array.isArray(r.seeing) ? r.seeing.slice(0, 8) : [];
+        $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · " + (seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet");
+        const sd = ["left", "right"].includes(r.obstacle_side) ? r.obstacle_side : "ahead";
+        if (r.near === "very_close" || r.near === "close") warnNow(ok(r.obstacle) ? bare(String(r.obstacle).toLowerCase()) : "something", r.near === "very_close" ? 2 : 1, sd);
+        else if (r.product && ok(r.product.name) && mode === "find" && Date.now() - lastWarn.t > 2500) {
+          const key = norm(r.product.name + " " + (r.product.brand || "")); const now = Date.now();
+          if (key !== lastProduct.key || now - lastProduct.t > 25000) {
+            lastProduct = { key, t: now }; logEv("Product seen: " + r.product.name);
+            showMatch({ readable: true, product: r.product.name, brand: r.product.brand, size: r.product.size, price: r.product.price, list_match: r.product.list_match, confidence: r.product.confidence || "medium" });
+          }
+        } else {
           const msg = String(r.say || "").trim();
-          if (msg && norm(msg) !== norm(lastScene) && Date.now() - lastWarn.t > 2500) { // a fresh obstacle warning wins
+          const speaking = window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending);
+          if (msg && norm(msg) !== norm(lastScene) && Date.now() - lastWarn.t > 2500 && !speaking) {
             lastScene = msg;
-            $("statusIc").textContent = r.on_list && r.on_list !== "null" ? "★" : "🚶"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
-            if (r.on_list && r.on_list !== "null") { try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {} }
+            $("statusIc").textContent = "🚶"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
             if (settings.voice === "sr") $("live").textContent = msg;
-            else if (settings.voice === "app" && window.speechSynthesis) { const u = new SpeechSynthesisUtterance(msg); applyVoice(u); speechSynthesis.speak(u); }
+            else if (settings.voice === "app" && window.speechSynthesis) { const u = applyVoice(new SpeechSynthesisUtterance(msg)); u.rate = 1.05; speechSynthesis.speak(u); }
           }
         }
       } catch (e) {
-        if (e && ["bad_key", "no_credit", "upstream_error", "network"].includes(e.code)) { visionFailed(e); if (walking && gen === walkGen) startPhoneWalk(true); return; }
+        logEv("Live guide: " + (e && (e.code || e.message)));
+        if (e && ["bad_key", "no_credit"].includes(e.code)) { visionFailed(e); if (walking && gen === walkGen) startPhoneWalk(true); return; }
+        if (++guideFails >= 4) { visionFailed({ code: "network" }); if (walking && gen === walkGen) startPhoneWalk(true); return; }
+        await sleep(1000);
       }
-      await sleep(Math.max(800, 3500 - (Date.now() - t0)));
+      await sleep(Math.max(300, 2000 - (Date.now() - t0)));
     }
   }
   async function startWalk() {
@@ -1718,7 +1800,6 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     if (apiKey && !apiDown && !claudeVision) {
       walking = true; lastHeard = {}; lastScene = ""; stopAim();
       $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
-      status("ok", "Walk mode on.");
       claudeWalkLoop(++walkGen);
       return;
     }
@@ -1729,24 +1810,20 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     const gen = ++walkGen;
     walking = true; lastHeard = {}; stopAim();
     $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
-    if (!quiet) status("busy", "Starting walk mode.");
+    if (!quiet) { $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide starting…"; }
     await loadDetector().catch(() => null);
     if (!walking || gen !== walkGen) return;
-    if (!detector) { status("error", "Walk mode isn't working right now. Check your internet, then try again.", { retry: startWalk }); stopWalk(true); return; }
-    if (!quiet) status("ok", "Walk mode on.");
-    walkLoop(gen);
-    // The scene model (filtered to everyday things) and the label reader join in when ready
-    loadClassifier().catch(() => null);
-    getWorker().then(w => { ocrWorker = w; }).catch(() => null);
+    if (!detector) { status("error", "The live guide isn't working right now. Check your internet, then try again.", { retry: startWalk }); stopWalk(true); return; }
+    walkLoop(gen); // object finder only: the heavier scene and text models froze some iPhones
   }
   function hush() { try { window.speechSynthesis && speechSynthesis.cancel(); } catch (_) {} }
   function stopWalk(silent) {
     const was = walking;
     if (was) hush();
     walking = false; walkGen++; drawBoxes([]); $("seeing").hidden = true; seenStreak.det = {}; seenStreak.cls = {}; lastSeen.det = []; lastSeen.cls = [];
-    $("walkBtn").setAttribute("aria-pressed", "false"); $("walkBtn").textContent = "🚶 Walk mode: tell me what I pass";
+    $("walkBtn").setAttribute("aria-pressed", "false");
     if (stream) setChip();
-    if (was && !silent) status("info", "Walk mode off.");
+    if (was && !silent) status("info", "Live guide off.");
   }
   // Stopping walk mode also turns the camera off, so everything goes quiet
   $("walkBtn").onclick = () => { if (walking) { stopWalk(true); stopCamera(true); status("info", "Walk mode off."); } else startWalk(); };
@@ -1754,6 +1831,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     if (document.hidden) { if (walking) stopWalk(true); return; }
     const tr = stream && stream.getVideoTracks()[0];
     if (tr && tr.readyState === "ended") { stopCamera(true); if (current === "shop") startCamera(); }
+    else if (stream && !walking && current === "shop") startWalk();
   });
 
   function grab() {
@@ -2192,7 +2270,8 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     return new Promise(res => {
       let rec; try { rec = new SR(); } catch (_) { res({ err: "no-sr" }); return; }
       let heard = "", err = null, silenceT = null, capT = null;
-      rec.lang = "en-GB"; rec.interimResults = true; rec.continuous = true;
+      rec.lang = "en-GB"; rec.interimResults = true; rec.continuous = !isApple; // iPhone: a pause ends the turn by itself
+      const startedAt = Date.now();
       rec.onresult = (e) => {
         let txt = "";
         for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript + " ";
@@ -2203,7 +2282,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
       rec.onerror = (e) => { err = e && e.error; logEv("Mic error: " + err); };
       rec.onstart = () => logEv("Mic listening");
       let ended = false;
-      rec.onend = () => { if (ended) return; ended = true; clearTimeout(silenceT); clearTimeout(capT); listening = false; talkRec = null; audioMode("playback"); setTimeout(() => res({ text: heard, err }), 350); };
+      rec.onend = () => { if (ended) return; ended = true; clearTimeout(silenceT); clearTimeout(capT); listening = false; talkRec = null; audioMode("playback"); const quick = Date.now() - startedAt < 1500; setTimeout(() => res({ text: heard, err, quick }), 350); };
       talkRec = rec; listening = true;
       capT = setTimeout(() => { try { rec.stop(); } catch (_) {} }, 20000); // at most 20 seconds per question
       audioMode("play-and-record");
@@ -2217,17 +2296,20 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     setTalkButtons(false);
     if (msg) { hush(); setTimeout(() => say(msg), 150); }
   }
-  async function talkTurn() {
+  // first = started by a tap: the mic must start right away, inside that tap, or iPhone blocks it
+  async function talkTurn(first) {
     if (!talking) return;
-    await beep();
-    if (!talking) return;
+    if (!first) { await beep(); if (!talking) return; }
     setTalkButtons(true, "✓ Done, send");
-    const r = await listenOnce();
+    const listen = listenOnce();
+    if (first) beep();
+    const r = await listen;
     setTalkButtons(true);
     if (!talking) return;
-    logEv("Listening ended: " + (r.err ? "error " + r.err : r.text ? '"' + r.text + '"' : "nothing heard"));
-    if (r.err && r.err !== "no-speech" && r.err !== "aborted") { stopTalking(r.err === "not-allowed" || r.err === "service-not-allowed" ? "The microphone isn't allowed. In Settings, allow the microphone and speech recognition for Safari, then try again." : "I couldn't hear you. Tap Talk to GuideCart and try again."); return; }
-    if (!r.text) { silentTurns++; if (silentTurns >= 2) { stopTalking("I didn't hear anything. Tap Talk to GuideCart when you're ready."); return; } setTimeout(talkTurn, 200); return; }
+    logEv("Listening ended: " + (r.err ? "error " + r.err : r.text ? '"' + r.text + '"' : "nothing heard") + (r.quick ? " (ended at once)" : ""));
+    if (!r.text && !first && (r.quick || r.err === "not-allowed" || r.err === "service-not-allowed")) { stopTalking("Tap Talk to GuideCart to reply."); return; } // iPhone needs a tap for each new question
+    if (r.err && r.err !== "no-speech" && r.err !== "aborted") { stopTalking(r.err === "not-allowed" || r.err === "service-not-allowed" ? "The microphone isn't allowed. On iPhone: Settings, Apps, Safari, Microphone, Allow. Then try again." : "I couldn't hear you. Tap Talk to GuideCart and speak after the beep."); return; }
+    if (!r.text) { silentTurns++; if (silentTurns >= 2 || r.quick) { stopTalking("I didn't hear anything. Tap Talk to GuideCart and speak after the beep."); return; } setTimeout(() => talkTurn(false), 200); return; }
     silentTurns = 0;
     if (/^(stop|bye|goodbye|that's all|that is all|thank you|thanks|no thanks|cancel|exit)[.!]?$/i.test(r.text)) { stopTalking("Bye for now."); return; }
     showTurn("you", r.text); addTalkLine("me", r.text);
@@ -2236,7 +2318,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     if (!talking) return;
     if (!answer) { stopTalking("No answer yet. Try again, or type your question."); return; }
     showTurn("bot", answer); addTalkLine("bot", answer);
-    speakThen(answer, () => { if (!talking) return; if (settings.voice === "sr") { stopTalking(); return; } talkTurn(); });
+    speakThen(answer, () => { if (!talking) return; if (settings.voice === "sr") { stopTalking(); return; } talkTurn(false); });
   }
 
   // ---------- The GuideCart agent (Claude, with the app's own data) ----------
@@ -2245,8 +2327,8 @@ How to speak: one or two short sentences, usually under 25 words; answer first; 
 You can see the person's shopping list, purchase history and the last thing they scanned, given below as APP DATA. Use it.
 If the person asks to add something they bought in the last 8 days (see recent_purchases), first ask "Are you sure? You bought it last week" (use the real number of days), and add it only if they say yes. If they ask when they last bought something, answer from recent_purchases with the day and price.
 You can change the shopping list, but ONLY after the person has clearly agreed. First ask ("Remove bread from your list?"); only when they say yes in their next message, return the action.
-The app layout: bottom bar from left to right: Home, My list, Shop, Settings. Shop has three modes at the top: Find product, Compare prices, Read text; then the camera, the big Check button, Live camera, Take photo, Walk mode and Sample photo.
-Safety: never invent product details; if you don't know, say so and suggest Check product, reading the label or asking staff. Never say a product is safe for an allergy; always add "Please double-check the label or ask staff." Say when you're not sure. You can't guide people around the shop or warn about obstacles yourself; Walk mode can warn about things close ahead, but they should still use their cane, guide dog or ask staff. Never talk about API keys, credit, servers or errors.
+The app layout: bottom bar from left to right: Home, My list, Shop, Test, Settings. Start shopping turns the camera on; while it is on, GuideCart warns about things close ahead, says what is around and names products held up to it. Shop has three modes at the top: Find product, Compare prices, Read text; then the camera, the big Check button, Start camera, Take photo and Sample photo. Test (Part 2) is test shopping with Evian water, a Barebells bar and Rio Mare tuna, whose prices GuideCart knows.
+Safety: never invent product details; if you don't know, say so and suggest Check product, reading the label or asking staff. Never say a product is safe for an allergy; always add "Please double-check the label or ask staff." Say when you're not sure. You can't guide people around the shop or warn about obstacles yourself; the camera can warn about things close ahead, but they should still use their cane, guide dog or ask staff. Never talk about API keys, credit, servers or errors.
 Reply with ONLY a JSON object: {"say": "what to say aloud", "action": null or {"type": "add_items" | "remove_items" | "mark_bought", "items": ["item names"]}}`;
   const agentTurns = [];
   function appData() {
@@ -2308,10 +2390,9 @@ Reply with ONLY a JSON object: {"say": "what to say aloud", "action": null or {"
     if (talking) { stopTalking("Stopped."); return; }
     openTalkPanel();
     if (!SR) { logEv("Speech recognition not available"); say("Voice questions aren't available on this phone. Ask someone to help you with the text chat."); $("talkPanel").hidden = true; return; }
-    hush();
+    try { speechSynthesis.cancel(); } catch (_) {}
     talking = true; typedChat = false; silentTurns = 0; setTalkButtons(true);
-    if (stream || walking) { stopWalk(true); stopCamera(true); }
-    talkTurn();
+    talkTurn(true); // mic starts now, inside the tap; the live guide pauses while you talk
   }));
   // Type instead: opens the written chat; replies are still read aloud
   document.querySelectorAll("[data-ask]").forEach(btn => btn.addEventListener("click", async () => {
@@ -2323,7 +2404,7 @@ Reply with ONLY a JSON object: {"say": "what to say aloud", "action": null or {"
 
   // ---------- Start ----------
   applySettings();
-  renderList(); renderHome(); renderCompare(); renderHistNote();
+  renderList(); renderHome(); renderCompare(); renderHistNote(); renderTest();
   go(settings.onboarded ? "home" : "onboarding");
   setTimeout(() => { ensureBotpress(); }, 2500);
   // Check for a newer version and reload once, so phones don't keep an old copy
