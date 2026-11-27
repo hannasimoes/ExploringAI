@@ -481,7 +481,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 18)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 19)</p>
   </section>
 </div>
 
@@ -1749,7 +1749,12 @@ Reply with ONLY JSON:
   }
   // The live guide with Claude: one small photo about every 2 seconds. Claude says what is close,
   // what is around, and names a product held up to the camera. Nothing runs on the phone itself.
-  let lastProduct = { key: "", t: 0 }, guideFails = 0;
+  let lastProduct = { key: "", t: 0 }, guideFails = 0, lastListSeen = { key: "", t: 0 };
+  function findOnList(text) {
+    if (!ok(text)) return null;
+    const t = String(text).toLowerCase(), st = testStoreItem(t), w = core(t);
+    return pending().find(i => norm(i.name) === norm(t) || (st && testStoreItem(i.name) === st) || core(i.name).some(x => w.includes(x))) || null;
+  }
   async function claudeWalkLoop(gen) {
     logEv("Live guide with Claude started");
     $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · looking…";
@@ -1764,23 +1769,47 @@ Reply with ONLY JSON:
         const r = await apiVision(
 `You are the eyes of a BLIND person in a shop, holding a phone camera upright at chest height. This is the camera view right now.
 Shopping list: ${JSON.stringify(list)}. Last thing you said: ${JSON.stringify(lastScene || "nothing yet")}.
+0. MOST IMPORTANT: "list_seen". Look for any item from the shopping list anywhere in the picture: on a shelf, in a fridge, on a display, even small or far away (read the brands: e.g. Evian, Barebells, Rio Mare). If you see one that is NOT being held, return {"item": the exact list item, "side": "left|ahead|right", "shelf": "top|middle|bottom|floor", "steps": rough number of steps away (0 if within reach)}. Otherwise null.
 1. "product": if a product (a bottle, can, box, packet, bar, fruit...) is held up to the camera, is in a hand, or is the main thing in the middle of the picture, name it, even if it is very close or fills the picture. Read the brand and name from the pack. Otherwise null.
 2. "near": obstacles in their WALKING PATH only. "very_close" if a person, trolley, box on the floor, chair, display stand, door, wall, step or the end of a shelf is within about one step; "close" if about two steps away; otherwise "none". A product held up to the camera is NEVER an obstacle: when "product" is set, "near" is "none". Shelves along the side do not count.
 3. "say": what is around them, at most 8 words, each thing with left, ahead or right, e.g. "Drinks shelf, right. Person, ahead." Put list items first ("Tuna, left. On your list."). Empty string if nothing has changed since what you said last, or if you are reporting a product.
 Only describe what you can clearly see. Never invent.
-JSON: {"near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "obstacle_side": "left|ahead|right", "product": null or {"name": "2 to 4 words", "brand": "or null", "size": "as printed, or null", "price": "price in pounds if a price is visible, else null", "list_match": "matching list item, or null", "confidence": "high|medium|low"}, "say": "", "seeing": ["short names of things in view"]}`, c, { fast: true });
+JSON: {"list_seen": null or {"item": "", "side": "", "shelf": "", "steps": 0}, "near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "obstacle_side": "left|ahead|right", "product": null or {"name": "2 to 4 words", "brand": "or null", "size": "as printed, or null", "price": "price in pounds if a price is visible, else null", "list_match": "matching list item, or null", "confidence": "high|medium|low"}, "say": "", "seeing": ["short names of things in view"]}`, c, { fast: true });
         if (!walking || gen !== walkGen) return;
         guideFails = 0;
         const seeing = Array.isArray(r.seeing) ? r.seeing.slice(0, 8) : [];
         $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · " + (seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet");
         const sd = ["left", "right"].includes(r.obstacle_side) ? r.obstacle_side : "ahead";
         const hasProduct = r.product && ok(r.product.name) && mode === "find";
-        if (!hasProduct && (r.near === "very_close" || r.near === "close")) warnNow(ok(r.obstacle) ? bare(String(r.obstacle).toLowerCase()) : "something", r.near === "very_close" ? 2 : 1, sd);
+        const ls = r.list_seen && typeof r.list_seen === "object" ? r.list_seen : null;
+        const lsItem = ls && !hasProduct ? findOnList(ls.item) : null;
+        if (!hasProduct && r.near === "very_close" && !(lsItem && +ls.steps === 0)) warnNow(ok(r.obstacle) ? bare(String(r.obstacle).toLowerCase()) : "something", 2, sd);
+        else if (lsItem) {
+          // A list item is on the shelf: say where it is and how to reach it
+          const now = Date.now(), key = lsItem.name + ":" + ls.side + ":" + ls.shelf;
+          if (key !== lastListSeen.key || now - lastListSeen.t > 10000) {
+            lastListSeen = { key, t: now };
+            const side2 = ["left", "right"].includes(ls.side) ? "on your " + ls.side : "ahead";
+            const shelf = ["top", "middle", "bottom"].includes(ls.shelf) ? `, ${ls.shelf} shelf` : ls.shelf === "floor" ? ", on the floor" : "";
+            const st = testStoreItem(lsItem.name), steps = Math.round(+ls.steps || 0);
+            const reach = steps > 0 ? ` About ${steps} step${steps === 1 ? "" : "s"} away.` : ls.side === "left" ? " Reach to your left." : ls.side === "right" ? " Reach to your right." : " Reach straight ahead.";
+            const alg = st && (st.allergens || []).filter(x => ALLERGIES.includes(x)).join(" and ");
+            const msg = alg ? `${cap(st.name)}, ${side2}${shelf}. It's on your list, but it contains ${alg}. You're allergic to ${alg}. Look for another option.`
+              : `${cap(st ? st.name : lsItem.name)}, ${side2}${shelf}. On your list.${reach} Hold it up to the camera.`;
+            logEv("List item seen: " + msg);
+            $("statusIc").textContent = "★"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
+            try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {}
+            if (settings.voice === "sr") $("live").textContent = msg;
+            else if (settings.voice === "app" && window.speechSynthesis) { try { speechSynthesis.cancel(); } catch (_) {} beep(990, 90).then(() => { if (!walking) return; const u = applyVoice(new SpeechSynthesisUtterance(msg)); speechSynthesis.speak(u); }); }
+          }
+        }
+        else if (!hasProduct && (r.near === "very_close" || r.near === "close")) warnNow(ok(r.obstacle) ? bare(String(r.obstacle).toLowerCase()) : "something", r.near === "very_close" ? 2 : 1, sd);
         else if (hasProduct) {
           const key = norm(r.product.name + " " + (r.product.brand || "")); const now = Date.now();
           if (key !== lastProduct.key || now - lastProduct.t > 20000) {
             lastProduct = { key, t: now }; logEv("Product seen: " + r.product.name);
-            showMatch({ readable: true, product: r.product.name, brand: r.product.brand, size: r.product.size, price: r.product.price, list_match: r.product.list_match, confidence: r.product.confidence || "medium" });
+            const li = findOnList(r.product.list_match) || findOnList([r.product.brand, r.product.name].filter(ok).join(" "));
+            showMatch({ readable: true, product: r.product.name, brand: r.product.brand, size: r.product.size, price: r.product.price, list_match: li ? li.name : null, confidence: r.product.confidence || "medium", auto: true });
           }
         } else {
           const msg = String(r.say || "").trim();
@@ -2110,7 +2139,14 @@ JSON: {"near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "ob
       const tx = document.createElement("span"); tx.textContent = (priceNow != null ? `Now ${money(priceNow)}${storeItem ? " (test store price)" : ""}. ` : "") + ins.parts.join(" ");
       tl.append(ic, tx); card.append(tl);
     }
-    if (match) {
+    if (match && r.auto) {
+      match.done = true; saveItems(); recordPurchase(r.product || match.name, priceNow);
+      const q = document.createElement("p"); q.style.fontWeight = "700"; q.textContent = `✓ ${cap(match.name)} is in your basket.`;
+      const undo = document.createElement("button"); undo.type = "button"; undo.textContent = "↶ Undo, put it back";
+      undo.onclick = () => { match.done = false; saveItems(); purchases.shift(); keep("history", purchases); box.innerHTML = ""; lastProduct = { key: "", t: 0 }; status("info", `${cap(match.name)} is back on your list.`); };
+      card.append(q, undo);
+      spoken += " On your list. In your basket." + (ins && ins.spoken.length ? " " + ins.spoken.join(" ") : "") + (pending().length ? "" : " That's everything on your list!");
+    } else if (match) {
       const q = document.createElement("p"); q.style.fontWeight = "700"; q.textContent = ins && (ins.up || ins.recent) ? `Still want the ${match.name}?` : `Is this the ${match.name} on your list?`;
       const row = document.createElement("div"); row.className = "row2";
       const yes = document.createElement("button"); yes.type = "button"; yes.className = "primary"; yes.textContent = "✓ Yes, tick it off";
