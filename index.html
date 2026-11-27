@@ -481,7 +481,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 20)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 21)</p>
   </section>
 </div>
 
@@ -1770,13 +1770,13 @@ Reply with ONLY JSON:
         const r = await apiVision(
 `You are the eyes of a BLIND person in a shop, holding a phone camera upright at chest height. This is the camera view right now.
 Shopping list: ${JSON.stringify(list)}. Last thing you said: ${JSON.stringify(lastScene || "nothing yet")}.
-Products to look for: ${JSON.stringify(watch)}.
-0. MOST IMPORTANT: "list_seen". Look for any of the products to look for anywhere in the picture: on a shelf, in a fridge, on a display, in a hand, even small, far away, partly visible or a little blurry from movement. Read brand names on the packs (Evian, Barebells, Rio Mare). If you see one, return {"item": its name from the list above, "side": "left|ahead|right", "shelf": "top|middle|bottom|floor", "steps": rough number of steps away (0 if within reach)}. Otherwise null.
+Products to look for (their shopping list, plus test products): ${JSON.stringify(watch)}. A list item matches any brand or size of that product (e.g. "milk" matches any milk, "pasta" any pasta).
+0. MOST IMPORTANT: "list_seen". Look for any of the products to look for anywhere in the picture: on a shelf, in a fridge, on a display, in a hand, even small, far away, partly visible or a little blurry from movement. Read brand names on the packs (Evian, Barebells, Rio Mare). If you see one, return {"item": its name from the list above, "side": "left|ahead|right", "shelf": "top|middle|bottom|floor", "steps": rough number of steps away (0 if within reach), "price": the price on its shelf label as a number if you can read it, else null}. Otherwise null.
 1. "product": if a product (a bottle, can, box, packet, bar, fruit...) is held up to the camera, is in a hand, or is the main thing in the middle of the picture, name it, even if it is very close or fills the picture. Read the brand and name from the pack. Otherwise null.
 2. "near": obstacles in their WALKING PATH only. "very_close" if a person, trolley, box on the floor, chair, display stand, door, wall, step or the end of a shelf is within about one step; "close" if about two steps away; otherwise "none". A product held up to the camera is NEVER an obstacle: when "product" is set, "near" is "none". Shelves along the side do not count.
-3. "say": what is around them, at most 8 words, each thing with left, ahead or right, e.g. "Drinks shelf, right. Person, ahead." Put list items first ("Tuna, left. On your list."). Empty string if nothing has changed since what you said last, or if you are reporting a product.
+3. "say": when the camera points at shelves or products, NAME THE PRODUCTS you can read (brand and type, at most 2, with left, ahead or right, and the shelf price if readable), e.g. "Heinz baked beans, left, £1.20. Kellogg's cornflakes, right." Otherwise describe what is around, e.g. "Drinks aisle, right. Person, ahead." At most 14 words. Empty string if nothing has changed since what you said last, or if you are reporting a product.
 Only describe what you can clearly see. Never invent.
-JSON: {"list_seen": null or {"item": "", "side": "", "shelf": "", "steps": 0}, "near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "obstacle_side": "left|ahead|right", "product": null or {"name": "2 to 4 words", "brand": "or null", "size": "as printed, or null", "price": "price in pounds if a price is visible, else null", "list_match": "matching list item, or null", "confidence": "high|medium|low"}, "say": "", "seeing": ["short names of things in view"]}`, c, { fast: true, max: 800 });
+JSON: {"list_seen": null or {"item": "", "side": "", "shelf": "", "steps": 0, "price": null}, "near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "obstacle_side": "left|ahead|right", "product": null or {"name": "2 to 4 words", "brand": "or null", "size": "as printed, or null", "price": "price in pounds if a price is visible, else null", "list_match": "matching list item, or null", "confidence": "high|medium|low"}, "say": "", "seeing": ["short names of things in view"]}`, c, { fast: true, max: 800 });
         if (!walking || gen !== walkGen) return;
         guideFails = 0;
         const seeing = Array.isArray(r.seeing) ? r.seeing.slice(0, 8) : [];
@@ -1795,11 +1795,12 @@ JSON: {"list_seen": null or {"item": "", "side": "", "shelf": "", "steps": 0}, "
             const side2 = ["left", "right"].includes(ls.side) ? "on your " + ls.side : "ahead";
             const shelf = ["top", "middle", "bottom"].includes(ls.shelf) ? `, ${ls.shelf} shelf` : ls.shelf === "floor" ? ", on the floor" : "";
             const st = testStoreItem(lsItem.name), steps = Math.round(+ls.steps || 0);
+            const shelfPrice = st ? st.price : num(ls.price);
             const reach = steps > 0 ? ` About ${steps} step${steps === 1 ? "" : "s"} away.` : ls.side === "left" ? " Reach to your left." : ls.side === "right" ? " Reach to your right." : " Reach straight ahead.";
             const alg = st && (st.allergens || []).filter(x => ALLERGIES.includes(x)).join(" and ");
             const msg = alg ? `${cap(st.name)}, ${side2}${shelf}. ${lsItem.offList ? "It" : "It's on your list, but it"} contains ${alg}. You're allergic to ${alg}. Look for another option.`
               : lsItem.offList ? `${cap(st.name)}, ${side2}${shelf}. ${pence(st.price)}. Not on your list.`
-              : `${cap(st ? st.name : lsItem.name)}, ${side2}${shelf}. ${st ? pence(st.price) + ". " : ""}On your list.${reach} Hold it up to the camera.`;
+              : `${cap(st ? st.name : lsItem.name)}, ${side2}${shelf}. ${shelfPrice != null ? pence(shelfPrice) + ". " : ""}On your list.${reach} Hold it up to the camera.`;
             logEv("List item seen: " + msg);
             $("statusIc").textContent = "★"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
             try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {}
