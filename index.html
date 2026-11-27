@@ -340,10 +340,11 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p>Part 2 of Ready to shop. Bring these 3 products. They don't need a price label: GuideCart knows today's test prices.</p>
       <ul class="items">
         <li><span class="name">Evian still water, 500ml · 85p</span></li>
-        <li><span class="name">Barebells cookies &amp; cream protein bar, 55g · £2.50</span></li>
+        <li><span class="name">Barebells cookies &amp; cream protein bar, 55g · £2.50 (contains milk)</span></li>
         <li><span class="name">Rio Mare tuna in olive oil, 160g · £2.30</span></li>
       </ul>
       <p class="muted" style="font-size:.95rem">Start test shopping puts them on your list and turns the camera on. Hold each product in front of the camera: GuideCart says what it is, its price, and what you paid last time.</p>
+      <p style="font-weight:700">⚠ Demo shopper: allergic to milk.</p>
       <p class="muted" id="testState" style="font-size:.95rem;font-weight:700"></p>
     </div>
     <button type="button" class="primary" id="testStart">▶ Start test shopping</button>
@@ -480,7 +481,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 17)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 18)</p>
   </section>
 </div>
 
@@ -548,9 +549,11 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   // Classroom test mode: today's prices for products brought in without a price label
   const TEST_STORE = [
     { name: "Evian water", size: "500ml", price: 0.85, keys: ["evian", "still water", "mineral water", "natural mineral"] },
-    { name: "Barebells protein bar", size: "55g", price: 2.50, keys: ["barebells", "bare bells", "protein bar", "cookies & cream", "cookies and cream", "cookies n cream"] },
+    { name: "Barebells protein bar", size: "55g", price: 2.50, allergens: ["milk"], keys: ["barebells", "bare bells", "protein bar", "cookies & cream", "cookies and cream", "cookies n cream"] },
     { name: "Rio Mare tuna", size: "160g", price: 2.30, keys: ["rio mare", "riomare", "tuna"] },
   ];
+  // Demo shopper profile: allergic to milk (shown on the Test screen)
+  const ALLERGIES = ["milk"];
   function testStoreItem(text) {
     if (!text) return null; // the 3 test products always have a price, test shopping on or off
     const n = String(text).toLowerCase();
@@ -2082,6 +2085,23 @@ JSON: {"near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "ob
     if (r.confidence === "low" && r.guidance && r.guidance !== "null") spoken += " " + r.guidance;
     const storeItem = testStoreItem([r.product, r.brand].filter(ok).join(" "));
     const priceNow = storeItem ? storeItem.price : num(r.price); // test products: always the test price
+    const allergy = storeItem && (storeItem.allergens || []).filter(a => ALLERGIES.includes(a));
+    if (allergy && allergy.length) {
+      const what = allergy.join(" and ");
+      const nm = storeItem.name.split(" ").slice(-2).join(" ");
+      const said = `${cap(nm)}. ${match ? "It's on your list, but it" : "It"} contains ${what}. You're allergic to ${what}. Look for another option.`;
+      const card2 = document.createElement("div"); card2.className = "result";
+      card2.innerHTML = `<span class="conf low"><span aria-hidden="true">⚠</span> Allergy</span><div class="what"></div><p class="muted why"></p>`;
+      card2.querySelector(".what").textContent = cap(desc);
+      card2.querySelector(".why").textContent = `Contains ${what}. You're allergic to ${what}. Look for another option.`;
+      const okB = document.createElement("button"); okB.type = "button"; okB.className = "primary"; okB.textContent = "OK, I'll look for another";
+      okB.onclick = () => { box.innerHTML = ""; status("info", "OK."); };
+      card2.append(okB); box.append(card2);
+      logEv("Allergy warning: " + storeItem.name);
+      status("error", said);
+      try { navigator.vibrate && navigator.vibrate([200, 80, 200]); } catch (_) {}
+      return;
+    }
     if (priceNow != null) spoken += ` ${pence(priceNow)}.`;
     const ins = insightFor(match ? match.name : r.product, priceNow);
     if (ins && ins.parts.length) {
@@ -2331,6 +2351,7 @@ You can see the person's shopping list, purchase history and the last thing they
 If the person asks to add something they bought in the last 8 days (see recent_purchases), first ask "Are you sure? You bought it last week" (use the real number of days), and add it only if they say yes. If they ask when they last bought something, answer from recent_purchases with the day and price.
 You can change the shopping list, but ONLY after the person has clearly agreed. First ask ("Remove bread from your list?"); only when they say yes in their next message, return the action.
 The app layout: bottom bar from left to right: Home, My list, Shop, Test, Settings. Start shopping turns the camera on; while it is on, GuideCart warns about things close ahead, says what is around and names products held up to it. Shop has three modes at the top: Find product, Compare prices, Read text; then the camera, the big Check button, Start camera, Take photo and Sample photo. Test (Part 2) is test shopping with Evian water, a Barebells bar and Rio Mare tuna, whose prices GuideCart knows.
+The person's allergies are in APP DATA (allergies). If they ask about a product that contains one (the Barebells protein bar contains milk), warn them: "It contains milk. You're allergic to milk. Look for another option."
 Safety: never invent product details; if you don't know, say so and suggest Check product, reading the label or asking staff. Never say a product is safe for an allergy; always add "Please double-check the label or ask staff." Say when you're not sure. You can't guide people around the shop or warn about obstacles yourself; the camera can warn about things close ahead, but they should still use their cane, guide dog or ask staff. Never talk about API keys, credit, servers or errors.
 Reply with ONLY a JSON object: {"say": "what to say aloud", "action": null or {"type": "add_items" | "remove_items" | "mark_bought", "items": ["item names"]}}`;
   const agentTurns = [];
@@ -2341,6 +2362,7 @@ Reply with ONLY a JSON object: {"say": "what to say aloud", "action": null or {"
       recent_purchases: purchases.slice(0, 15).map(p => ({ name: p.name, price: p.price, days_ago: daysAgo(p.date) })),
       last_scan: lastScan ? { what: lastScan.type, minutes_ago: Math.round((Date.now() - lastScan.at) / 60000), result: lastScan.result } : null,
       screen: current,
+      allergies: ALLERGIES,
       test_store_prices_today: TEST_STORE.map(p => ({ name: p.name, size: p.size, price: p.price })),
     });
   }
