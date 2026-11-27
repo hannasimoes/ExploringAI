@@ -481,7 +481,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 19)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 20)</p>
   </section>
 </div>
 
@@ -1178,9 +1178,9 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     }
     throw { code: "upstream_error" };
   }
-  async function apiVision(prompt, canvas, { fast = false, signal } = {}) {
+  async function apiVision(prompt, canvas, { fast = false, signal, max } = {}) {
     const r = await apiCall([
-      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: smallJpeg(canvas, fast ? 640 : 1280) } },
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: smallJpeg(canvas, max || (fast ? 640 : 1280)) } },
       { type: "text", text: prompt + "\nReply with ONLY the JSON object." }], fast, fast ? 300 : 1200, signal);
     return parseJSON(r.text);
   }
@@ -1762,27 +1762,30 @@ Reply with ONLY JSON:
       if (!stream || busy || talking || document.hidden || !video.videoWidth) { await sleep(600); continue; }
       const t0 = Date.now();
       try {
-        const vw = video.videoWidth, vh = video.videoHeight, sc = Math.min(1, 512 / Math.max(vw, vh));
+        const vw = video.videoWidth, vh = video.videoHeight, sc = Math.min(1, 800 / Math.max(vw, vh)); // big enough to read brands on a shelf
         const c = document.createElement("canvas"); c.width = Math.round(vw * sc); c.height = Math.round(vh * sc);
         c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
         const list = pending().map(i => i.name);
+        const watch = [...new Set([...list, ...TEST_STORE.map(t => t.name + " (" + t.keys[0] + ")")])];
         const r = await apiVision(
 `You are the eyes of a BLIND person in a shop, holding a phone camera upright at chest height. This is the camera view right now.
 Shopping list: ${JSON.stringify(list)}. Last thing you said: ${JSON.stringify(lastScene || "nothing yet")}.
-0. MOST IMPORTANT: "list_seen". Look for any item from the shopping list anywhere in the picture: on a shelf, in a fridge, on a display, even small or far away (read the brands: e.g. Evian, Barebells, Rio Mare). If you see one that is NOT being held, return {"item": the exact list item, "side": "left|ahead|right", "shelf": "top|middle|bottom|floor", "steps": rough number of steps away (0 if within reach)}. Otherwise null.
+Products to look for: ${JSON.stringify(watch)}.
+0. MOST IMPORTANT: "list_seen". Look for any of the products to look for anywhere in the picture: on a shelf, in a fridge, on a display, in a hand, even small, far away, partly visible or a little blurry from movement. Read brand names on the packs (Evian, Barebells, Rio Mare). If you see one, return {"item": its name from the list above, "side": "left|ahead|right", "shelf": "top|middle|bottom|floor", "steps": rough number of steps away (0 if within reach)}. Otherwise null.
 1. "product": if a product (a bottle, can, box, packet, bar, fruit...) is held up to the camera, is in a hand, or is the main thing in the middle of the picture, name it, even if it is very close or fills the picture. Read the brand and name from the pack. Otherwise null.
 2. "near": obstacles in their WALKING PATH only. "very_close" if a person, trolley, box on the floor, chair, display stand, door, wall, step or the end of a shelf is within about one step; "close" if about two steps away; otherwise "none". A product held up to the camera is NEVER an obstacle: when "product" is set, "near" is "none". Shelves along the side do not count.
 3. "say": what is around them, at most 8 words, each thing with left, ahead or right, e.g. "Drinks shelf, right. Person, ahead." Put list items first ("Tuna, left. On your list."). Empty string if nothing has changed since what you said last, or if you are reporting a product.
 Only describe what you can clearly see. Never invent.
-JSON: {"list_seen": null or {"item": "", "side": "", "shelf": "", "steps": 0}, "near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "obstacle_side": "left|ahead|right", "product": null or {"name": "2 to 4 words", "brand": "or null", "size": "as printed, or null", "price": "price in pounds if a price is visible, else null", "list_match": "matching list item, or null", "confidence": "high|medium|low"}, "say": "", "seeing": ["short names of things in view"]}`, c, { fast: true });
+JSON: {"list_seen": null or {"item": "", "side": "", "shelf": "", "steps": 0}, "near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "obstacle_side": "left|ahead|right", "product": null or {"name": "2 to 4 words", "brand": "or null", "size": "as printed, or null", "price": "price in pounds if a price is visible, else null", "list_match": "matching list item, or null", "confidence": "high|medium|low"}, "say": "", "seeing": ["short names of things in view"]}`, c, { fast: true, max: 800 });
         if (!walking || gen !== walkGen) return;
         guideFails = 0;
         const seeing = Array.isArray(r.seeing) ? r.seeing.slice(0, 8) : [];
         $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · " + (seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet");
         const sd = ["left", "right"].includes(r.obstacle_side) ? r.obstacle_side : "ahead";
-        const hasProduct = r.product && ok(r.product.name) && mode === "find";
+        const hasProduct = r.product && ok(r.product.name) && mode !== "read";
         const ls = r.list_seen && typeof r.list_seen === "object" ? r.list_seen : null;
-        const lsItem = ls && !hasProduct ? findOnList(ls.item) : null;
+        let lsItem = ls && !hasProduct ? findOnList(ls.item) : null;
+        if (!lsItem && ls && !hasProduct && testStoreItem(ls.item)) lsItem = { name: testStoreItem(ls.item).name, offList: true };
         if (!hasProduct && r.near === "very_close" && !(lsItem && +ls.steps === 0)) warnNow(ok(r.obstacle) ? bare(String(r.obstacle).toLowerCase()) : "something", 2, sd);
         else if (lsItem) {
           // A list item is on the shelf: say where it is and how to reach it
@@ -1794,8 +1797,9 @@ JSON: {"list_seen": null or {"item": "", "side": "", "shelf": "", "steps": 0}, "
             const st = testStoreItem(lsItem.name), steps = Math.round(+ls.steps || 0);
             const reach = steps > 0 ? ` About ${steps} step${steps === 1 ? "" : "s"} away.` : ls.side === "left" ? " Reach to your left." : ls.side === "right" ? " Reach to your right." : " Reach straight ahead.";
             const alg = st && (st.allergens || []).filter(x => ALLERGIES.includes(x)).join(" and ");
-            const msg = alg ? `${cap(st.name)}, ${side2}${shelf}. It's on your list, but it contains ${alg}. You're allergic to ${alg}. Look for another option.`
-              : `${cap(st ? st.name : lsItem.name)}, ${side2}${shelf}. On your list.${reach} Hold it up to the camera.`;
+            const msg = alg ? `${cap(st.name)}, ${side2}${shelf}. ${lsItem.offList ? "It" : "It's on your list, but it"} contains ${alg}. You're allergic to ${alg}. Look for another option.`
+              : lsItem.offList ? `${cap(st.name)}, ${side2}${shelf}. ${pence(st.price)}. Not on your list.`
+              : `${cap(st ? st.name : lsItem.name)}, ${side2}${shelf}. ${st ? pence(st.price) + ". " : ""}On your list.${reach} Hold it up to the camera.`;
             logEv("List item seen: " + msg);
             $("statusIc").textContent = "★"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
             try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {}
