@@ -272,12 +272,13 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     // so if it didn't start, the tap speaks it (VoiceOver users hear it straight away from the button's label).
     setTimeout(function () {
       var voice = "app"; try { voice = (JSON.parse(localStorage.getItem("gc-settings") || "{}").voice) || "app"; } catch (_) {}
-      var apple = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-      if (apple || voice !== "app" || !window.speechSynthesis || w.hidden) return; // iPhone blocks it and it would jam the tap's speech
+      if (voice !== "app" || !window.speechSynthesis || w.hidden) return;
       var u = new SpeechSynthesisUtterance("Welcome to your GuideCart! If you need any help, please use our chat. Tap anywhere to start."); u.lang = "en-GB";
       u.onstart = function () { window.__gcWelcomeAuto = true; };
       try { speechSynthesis.speak(u); } catch (_) {}
-    }, 400);
+      // blocked (iPhone without a tap)? clear it so the tap speaks straight away
+      setTimeout(function () { if (!window.__gcWelcomeAuto) { try { speechSynthesis.cancel(); } catch (_) {} } }, 1500);
+    }, 300);
   })();
   </script>
   <section class="screen" id="s-home" hidden aria-labelledby="home-h">
@@ -479,7 +480,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 16)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 17)</p>
   </section>
 </div>
 
@@ -546,12 +547,12 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   if (settings.testV !== 2) { settings.testStore = "off"; settings.testV = 2; }
   // Classroom test mode: today's prices for products brought in without a price label
   const TEST_STORE = [
-    { name: "Evian water", size: "500ml", price: 0.85, keys: ["evian", "still water", "mineral water"] },
-    { name: "Barebells protein bar", size: "55g", price: 2.50, keys: ["barebells", "protein bar", "cookies & cream", "cookies and cream"] },
-    { name: "Rio Mare tuna", size: "160g", price: 2.30, keys: ["rio mare", "tuna"] },
+    { name: "Evian water", size: "500ml", price: 0.85, keys: ["evian", "still water", "mineral water", "natural mineral"] },
+    { name: "Barebells protein bar", size: "55g", price: 2.50, keys: ["barebells", "bare bells", "protein bar", "cookies & cream", "cookies and cream", "cookies n cream"] },
+    { name: "Rio Mare tuna", size: "160g", price: 2.30, keys: ["rio mare", "riomare", "tuna"] },
   ];
   function testStoreItem(text) {
-    if (settings.testStore !== "on" || !text) return null;
+    if (!text) return null; // the 3 test products always have a price, test shopping on or off
     const n = String(text).toLowerCase();
     return TEST_STORE.find(p => p.keys.some(k => n.includes(k))) || null;
   }
@@ -1608,6 +1609,7 @@ Reply with ONLY JSON:
       if (p.score < 0.45) return;
       const [x, , w, h] = p.bbox, cx = (x + w / 2) / W, area = (w * h) / (W * H), wide = w / W;
       if (cx < 0.15 || cx > 0.85) return; // only what is in your path
+      if (PRODUCT_CLASSES.has(p.class)) return; // a bottle or pack held up to the camera is a product, not an obstacle
       const lvl = (area > 0.45 || wide > 0.75) ? 2 : (area > 0.2 || wide > 0.5) ? 1 : 0;
       if (!lvl) return;
       const name = (HIGH_BAR.has(p.class) && p.score < 0.75) ? "something" : bare(COCO_NAMES[p.class] || p.class);
@@ -1749,7 +1751,7 @@ Reply with ONLY JSON:
     logEv("Live guide with Claude started");
     $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · looking…";
     while (walking && gen === walkGen) {
-      if (!stream || busy || awaitingConfirm || talking || document.hidden || !video.videoWidth) { await sleep(600); continue; }
+      if (!stream || busy || talking || document.hidden || !video.videoWidth) { await sleep(600); continue; }
       const t0 = Date.now();
       try {
         const vw = video.videoWidth, vh = video.videoHeight, sc = Math.min(1, 512 / Math.max(vw, vh));
@@ -1759,8 +1761,8 @@ Reply with ONLY JSON:
         const r = await apiVision(
 `You are the eyes of a BLIND person in a shop, holding a phone camera upright at chest height. This is the camera view right now.
 Shopping list: ${JSON.stringify(list)}. Last thing you said: ${JSON.stringify(lastScene || "nothing yet")}.
-1. Safety first. "near" is "very_close" if something in their walking path (centre or lower half of the picture) is within about one step: a person, trolley, box, chair, display stand, door, wall, step or the end of a shelf. "close" if about two steps away. Otherwise "none". Shelves along the side do not count.
-2. "product": only if ONE product is held up or clearly fills the middle of the picture and you can read or recognise it. Otherwise null.
+1. "product": if a product (a bottle, can, box, packet, bar, fruit...) is held up to the camera, is in a hand, or is the main thing in the middle of the picture, name it, even if it is very close or fills the picture. Read the brand and name from the pack. Otherwise null.
+2. "near": obstacles in their WALKING PATH only. "very_close" if a person, trolley, box on the floor, chair, display stand, door, wall, step or the end of a shelf is within about one step; "close" if about two steps away; otherwise "none". A product held up to the camera is NEVER an obstacle: when "product" is set, "near" is "none". Shelves along the side do not count.
 3. "say": what is around them, at most 8 words, each thing with left, ahead or right, e.g. "Drinks shelf, right. Person, ahead." Put list items first ("Tuna, left. On your list."). Empty string if nothing has changed since what you said last, or if you are reporting a product.
 Only describe what you can clearly see. Never invent.
 JSON: {"near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "obstacle_side": "left|ahead|right", "product": null or {"name": "2 to 4 words", "brand": "or null", "size": "as printed, or null", "price": "price in pounds if a price is visible, else null", "list_match": "matching list item, or null", "confidence": "high|medium|low"}, "say": "", "seeing": ["short names of things in view"]}`, c, { fast: true });
@@ -1769,10 +1771,11 @@ JSON: {"near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "ob
         const seeing = Array.isArray(r.seeing) ? r.seeing.slice(0, 8) : [];
         $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · " + (seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet");
         const sd = ["left", "right"].includes(r.obstacle_side) ? r.obstacle_side : "ahead";
-        if (r.near === "very_close" || r.near === "close") warnNow(ok(r.obstacle) ? bare(String(r.obstacle).toLowerCase()) : "something", r.near === "very_close" ? 2 : 1, sd);
-        else if (r.product && ok(r.product.name) && mode === "find" && Date.now() - lastWarn.t > 2500) {
+        const hasProduct = r.product && ok(r.product.name) && mode === "find";
+        if (!hasProduct && (r.near === "very_close" || r.near === "close")) warnNow(ok(r.obstacle) ? bare(String(r.obstacle).toLowerCase()) : "something", r.near === "very_close" ? 2 : 1, sd);
+        else if (hasProduct) {
           const key = norm(r.product.name + " " + (r.product.brand || "")); const now = Date.now();
-          if (key !== lastProduct.key || now - lastProduct.t > 25000) {
+          if (key !== lastProduct.key || now - lastProduct.t > 20000) {
             lastProduct = { key, t: now }; logEv("Product seen: " + r.product.name);
             showMatch({ readable: true, product: r.product.name, brand: r.product.brand, size: r.product.size, price: r.product.price, list_match: r.product.list_match, confidence: r.product.confidence || "medium" });
           }
@@ -2077,8 +2080,8 @@ JSON: {"near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "ob
     card.querySelector(".why").textContent = r.why_unsure && r.why_unsure !== "null" ? r.why_unsure : "";
     let spoken = (LEAD[r.confidence] || LEAD.low)(desc);
     if (r.confidence === "low" && r.guidance && r.guidance !== "null") spoken += " " + r.guidance;
-    const storeItem = num(r.price) == null ? testStoreItem([r.product, r.brand].filter(ok).join(" ")) : null;
-    const priceNow = num(r.price) != null ? num(r.price) : storeItem ? storeItem.price : null;
+    const storeItem = testStoreItem([r.product, r.brand].filter(ok).join(" "));
+    const priceNow = storeItem ? storeItem.price : num(r.price); // test products: always the test price
     if (priceNow != null) spoken += ` ${pence(priceNow)}.`;
     const ins = insightFor(match ? match.name : r.product, priceNow);
     if (ins && ins.parts.length) {
@@ -2338,7 +2341,7 @@ Reply with ONLY a JSON object: {"say": "what to say aloud", "action": null or {"
       recent_purchases: purchases.slice(0, 15).map(p => ({ name: p.name, price: p.price, days_ago: daysAgo(p.date) })),
       last_scan: lastScan ? { what: lastScan.type, minutes_ago: Math.round((Date.now() - lastScan.at) / 60000), result: lastScan.result } : null,
       screen: current,
-      test_store_prices_today: settings.testStore === "on" ? TEST_STORE.map(p => ({ name: p.name, size: p.size, price: p.price })) : null,
+      test_store_prices_today: TEST_STORE.map(p => ({ name: p.name, size: p.size, price: p.price })),
     });
   }
   function runAction(a) {
