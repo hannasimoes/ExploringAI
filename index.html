@@ -371,6 +371,8 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <h2>Preview</h2>
       <div class="status"><span class="ic" aria-hidden="true">✓</span><span>This is whole milk, 1 litre.</span></div>
       <button type="button" id="testVoice">🔊 Test voice</button>
+      <button type="button" id="voiceCheck">🩺 Voice check</button>
+      <p class="muted" id="voiceDiag" style="font-size:.9rem;white-space:pre-wrap" hidden></p>
       <p class="muted" id="voiceNote" style="font-size:.95rem">No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up.</p>
     </div>
     <div class="panel">
@@ -401,7 +403,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-26 (update 5)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 6)</p>
   </section>
 </div>
 
@@ -453,6 +455,8 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
 
   // ---------- Speech (M08: app voice, screen reader or off) ----------
   let voice = null, lastSaid = "";
+  const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const applyVoice = (u) => { u.lang = "en-GB"; if (voice && !isApple) u.voice = voice; return u; };
   const pickVoice = () => { const vs = window.speechSynthesis ? speechSynthesis.getVoices() : []; voice = vs.find(v => /en[-_]GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null; };
   if (window.speechSynthesis) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
   // echo = the name of a button just pressed. Echoes interrupt anything; a message that follows
@@ -467,7 +471,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const interrupt = talking && (echo || !echoSpeaking);
     const speakIt = () => {
       try { speechSynthesis.resume(); } catch (_) {}
-      const u = new SpeechSynthesisUtterance(text); u.lang = "en-GB"; if (voice) u.voice = voice;
+      const u = new SpeechSynthesisUtterance(text); applyVoice(u);
       u.rate = echo ? 1.1 : 1; u.volume = 1;
       echoSpeaking = echo;
       u.onend = () => { if (echo) echoSpeaking = false; };
@@ -476,16 +480,17 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     // iPhone Safari drops an utterance spoken right after cancel(), so wait a moment in that case only.
     if (interrupt) { speechSynthesis.cancel(); setTimeout(speakIt, 150); } else speakIt();
   }
-  // iPhone only allows speech after a tap: the first touch anywhere starts the voice silently.
+  // iPhone only allows speech that starts during a tap. The first tap wakes the speech engine
+  // (no sound) and clears anything stuck in its queue.
   let voiceUnlocked = false;
   const unlockVoice = () => {
     if (voiceUnlocked || !window.speechSynthesis) return;
     voiceUnlocked = true;
-    try { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch (_) {}
+    try { speechSynthesis.cancel(); speechSynthesis.resume(); } catch (_) {}
     pickVoice();
   };
-  document.addEventListener("touchstart", unlockVoice, { capture: true, passive: true });
-  document.addEventListener("pointerdown", unlockVoice, true);
+  document.addEventListener("touchend", unlockVoice, { capture: true, passive: true });
+  document.addEventListener("click", unlockVoice, true);
   // Read every button aloud when it is pressed (App voice mode; VoiceOver already does this itself)
   const ch = (n) => String.fromCharCode(n);
   const SYMBOLS = new RegExp("[" + ch(0x2190) + "-" + ch(0x2BFF) + ch(0xFE0F) + "]|[" + ch(0xD83C) + "-" + ch(0xD83E) + "][" + ch(0xDC00) + "-" + ch(0xDFFF) + "]", "g");
@@ -542,13 +547,32 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   // Speaks with the app's own voice whatever the setting (used for confirmations and Test voice)
   function sayDirect(text) {
     if (!window.speechSynthesis) return;
-    try { speechSynthesis.cancel(); } catch (_) {}
-    setTimeout(() => { const u = new SpeechSynthesisUtterance(text); u.lang = "en-GB"; if (voice) u.voice = voice; speechSynthesis.speak(u); }, 150);
+    try { speechSynthesis.cancel(); speechSynthesis.resume(); } catch (_) {}
+    let started = false;
+    const u = applyVoice(new SpeechSynthesisUtterance(text)); u.volume = 1; u.onstart = () => { started = true; };
+    speechSynthesis.speak(u); // inside the tap, which iPhone requires
+    setTimeout(() => { if (!started && !speechSynthesis.speaking) { const u2 = applyVoice(new SpeechSynthesisUtterance(text)); speechSynthesis.speak(u2); } }, 700);
   }
   document.querySelectorAll("[data-voice]").forEach(b => b.addEventListener("click", () => {
     settings.voice = b.dataset.voice; applySettings();
     sayDirect(settings.voice === "sr" ? "OK. GuideCart will stay quiet and VoiceOver will read for you. If you hear nothing, choose Speak to me." : "OK. I'll speak to you.");
   }));
+  $("voiceCheck").onclick = () => {
+    const out = $("voiceDiag"); out.hidden = false;
+    const lines = [], add = (s) => { lines.push(s); out.textContent = lines.join("\n"); };
+    if (!window.speechSynthesis) { add("Speech: NOT supported in this browser."); return; }
+    const vs = speechSynthesis.getVoices();
+    add(`Speech: supported · voices: ${vs.length} · English: ${vs.filter(v => /^en/i.test(v.lang)).length}`);
+    add(`Device: ${isApple ? "iPhone/iPad" : "other"} · ${navigator.standalone || matchMedia("(display-mode: standalone)").matches ? "home-screen app" : "browser"} · setting: ${settings.voice}`);
+    try { speechSynthesis.cancel(); speechSynthesis.resume(); } catch (_) {}
+    const u = new SpeechSynthesisUtterance("Voice check. One, two, three."); u.lang = "en-GB"; u.volume = 1;
+    u.onstart = () => add("✓ Started speaking");
+    u.onend = () => add("✓ Finished. If you heard nothing, the phone is on silent or the volume is down.");
+    u.onerror = (e) => add("✕ Error: " + (e && e.error));
+    speechSynthesis.speak(u);
+    add("Sent: \"Voice check. One, two, three.\"");
+    setTimeout(() => { if (!lines.some(l => l.startsWith("✓ Started") || l.startsWith("✕"))) add(`✕ Nothing started after 3 seconds (speaking: ${speechSynthesis.speaking}, pending: ${speechSynthesis.pending}). Close the app completely and open it again.`); }, 3000);
+  };
   $("quietFix").onclick = () => { settings.voice = "app"; applySettings(); sayDirect("Voice on. I'll speak to you."); };
   $("testVoice").onclick = () => {
     const n = $("voiceNote");
@@ -930,7 +954,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     lastSaid = text;
     const parts = String(text).match(/[^.!?\n]{1,180}[.!?\n]?/g) || [text];
     speechSynthesis.cancel();
-    setTimeout(() => parts.forEach(pc => { const u = new SpeechSynthesisUtterance(pc.trim()); u.lang = "en-GB"; if (voice) u.voice = voice; speechSynthesis.speak(u); }), 200);
+    setTimeout(() => parts.forEach(pc => { const u = new SpeechSynthesisUtterance(pc.trim()); applyVoice(u); speechSynthesis.speak(u); }), 200);
   }
   const toBlob = (c) => new Promise(r => c.toBlob(r, "image/jpeg", 0.88));
   // ---- Claude Vision through the user's own API key (website mode) ----
@@ -1404,7 +1428,7 @@ Reply with ONLY JSON:
       if (listItem) { try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {} }
       if (settings.voice === "sr") { $("live").textContent = msg; return; }
       if (settings.voice !== "app" || !window.speechSynthesis) return;
-      const u = new SpeechSynthesisUtterance(msg); u.lang = "en-GB"; if (voice) u.voice = voice;
+      const u = new SpeechSynthesisUtterance(msg); applyVoice(u);
       if (listItem) speechSynthesis.cancel();
       speechSynthesis.speak(u);
     }).catch(() => {}).finally(() => { readingObject = false; });
@@ -1476,7 +1500,7 @@ Reply with ONLY JSON:
     if (listed.length && talking) speechSynthesis.cancel();
     setTimeout(() => {
       if (!walking) return;
-      const u = new SpeechSynthesisUtterance(msg); u.lang = "en-GB"; if (voice) u.voice = voice; u.rate = 1.05;
+      const u = new SpeechSynthesisUtterance(msg); applyVoice(u); u.rate = 1.05;
       speechSynthesis.speak(u);
     }, listed.length && talking ? 150 : 0);
   }
@@ -1505,7 +1529,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
             $("statusIc").textContent = r.on_list && r.on_list !== "null" ? "★" : "🚶"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
             if (r.on_list && r.on_list !== "null") { try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {} }
             if (settings.voice === "sr") $("live").textContent = msg;
-            else if (settings.voice === "app" && window.speechSynthesis) { const u = new SpeechSynthesisUtterance(msg); u.lang = "en-GB"; if (voice) u.voice = voice; speechSynthesis.speak(u); }
+            else if (settings.voice === "app" && window.speechSynthesis) { const u = new SpeechSynthesisUtterance(msg); applyVoice(u); speechSynthesis.speak(u); }
           }
         }
       } catch (e) {
@@ -1949,7 +1973,7 @@ JSON: {"say": "sentence, or empty string if nothing new", "seeing": ["short", "n
     const parts = String(text).match(/[^.!?\n]{1,180}[.!?\n]?/g) || [text];
     let finished = false; const fin = () => { if (!finished) { finished = true; done(); } };
     parts.forEach((pc, i) => {
-      const u = new SpeechSynthesisUtterance(pc.trim()); u.lang = "en-GB"; if (voice) u.voice = voice;
+      const u = new SpeechSynthesisUtterance(pc.trim()); applyVoice(u);
       if (i === parts.length - 1) u.onend = fin;
       speechSynthesis.speak(u);
     });
