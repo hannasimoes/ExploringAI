@@ -343,7 +343,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
         <li><span class="name">Barebells cookies &amp; cream protein bar, 55g · £2.50 (contains milk)</span></li>
         <li><span class="name">Rio Mare tuna in olive oil, 160g · £2.30</span></li>
       </ul>
-      <p class="muted" style="font-size:.95rem">Start test shopping puts them on your list and turns the camera on. Hold each product in front of the camera: GuideCart says what it is, its price, and what you paid last time.</p>
+      <p class="muted" style="font-size:.95rem">Start test shopping makes these 3 your whole list and turns the camera on. Walk along the shelves: GuideCart says where each one is ("Evian water, on your right, middle shelf"). Hold it up to the camera and it goes in your basket, with its price.</p>
       <p style="font-weight:700">⚠ Demo shopper: allergic to milk.</p>
       <p class="muted" id="testState" style="font-size:.95rem;font-weight:700"></p>
     </div>
@@ -748,10 +748,10 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   $("testStart").onclick = () => {
     const was = settings.testStore === "on";
     settings.testStore = "on"; applySettings();
-    const need = ["evian water 500ml", "barebells protein bar", "rio mare tuna"].filter(n => !pending().some(i => core(i.name).some(w => core(n).includes(w))));
-    if (need.length) { need.forEach(n => items.push({ name: n, done: false })); saveItems(); }
+    // MVP test: the list is just the 3 test products
+    items = ["evian water 500ml", "barebells protein bar", "rio mare tuna"].map(n => ({ name: n, done: false })); saveItems();
     renderTest(); go("shop"); setMode("find");
-    if (!was) say(need.length ? "Test shopping on. Evian, Barebells and Rio Mare are on your list." : "Test shopping on.");
+    say("Test shopping on. Your list: Evian water, Barebells protein bar and Rio Mare tuna.");
     if (!stream) askCamera(null);
   };
   const endTest = () => { settings.testStore = "off"; applySettings(); renderTest(); say("Test shopping off."); };
