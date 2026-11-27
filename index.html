@@ -242,11 +242,33 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   </section>
 
   <!-- HOME -->
-  <button type="button" id="welcome" class="welcome" hidden aria-label="Welcome to your GuideCart. If you need any help, please use our chat. Tap anywhere to start.">
+  <button type="button" id="welcome" class="welcome" aria-label="Welcome to your GuideCart. If you need any help, please use our chat. Tap anywhere to start.">
     <span class="wl-brand">GuideCart</span>
     <span class="wl-text">Welcome to your GuideCart!<br>If you need any help, please use our chat.</span>
     <span class="wl-tap">Tap anywhere to start</span>
   </button>
+  <script>
+  // Welcome works on its own, before the rest of the app loads. Speech must start inside the tap on iPhone,
+  // so it is spoken here directly, with no cancel() first (iPhone drops speech started right after cancel).
+  (function () {
+    window.__gcErrors = [];
+    window.addEventListener("error", function (e) { window.__gcErrors.push((e.message || "error") + " @" + (e.lineno || "?")); });
+    var w = document.getElementById("welcome");
+    window.gcWelcomeTap = function () {
+      w.hidden = true;
+      var voice = "app"; try { voice = (JSON.parse(localStorage.getItem("gc-settings") || "{}").voice) || "app"; } catch (_) {}
+      var msg = "Welcome to your GuideCart! If you need any help, please use our chat.";
+      if (voice === "app" && window.speechSynthesis) {
+        try { if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel(); speechSynthesis.resume(); } catch (_) {}
+        var u = new SpeechSynthesisUtterance(msg); u.lang = "en-GB"; u.volume = 1; u.rate = 1;
+        window.__gcWelcomeSpoken = true;
+        speechSynthesis.speak(u);
+      } else if (voice === "sr") { var l = document.getElementById("live"); if (l) l.textContent = msg; }
+      document.dispatchEvent(new Event("gc-welcomed"));
+    };
+    w.addEventListener("click", function () { window.gcWelcomeTap(); });
+  })();
+  </script>
   <section class="screen" id="s-home" hidden aria-labelledby="home-h">
     <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="currentColor"/><path d="M8 11h2l2.4 9.2h9.2L24 13H12" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13.5" cy="24" r="1.6" fill="#fff"/><circle cx="20.5" cy="24" r="1.6" fill="#fff"/></svg>GuideCart AI</div>
     <div class="notice" id="quietNotice" hidden>
@@ -431,7 +453,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 14)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 15)</p>
   </section>
 </div>
 
@@ -512,10 +534,12 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   // After the microphone is used, iPhone keeps the audio in "recording" mode and speech becomes
   // very quiet or silent. Safari's audio session setting puts it back to normal playback.
   var listening = false;
+  let micUsed = false;
   function audioMode(m) {
+    if (m === "play-and-record") micUsed = true;
+    if (m === "playback" && !micUsed) return; // never change the phone's audio before the mic is used
     try { const as = navigator.audioSession; if (as && as.type !== m) { as.type = m; logEv("Audio mode: " + m); } } catch (_) {}
   }
-  audioMode("playback");
   const applyVoice = (u) => { u.lang = "en-GB"; if (voice && !isApple) u.voice = voice; return u; };
   const pickVoice = () => { const vs = window.speechSynthesis ? speechSynthesis.getVoices() : []; voice = vs.find(v => /en[-_]GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null; };
   if (window.speechSynthesis) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
@@ -547,7 +571,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   const unlockVoice = () => {
     if (voiceUnlocked || !window.speechSynthesis) return;
     voiceUnlocked = true;
-    try { speechSynthesis.cancel(); speechSynthesis.resume(); } catch (_) {}
+    try { speechSynthesis.resume(); } catch (_) {}
     pickVoice();
   };
   document.addEventListener("touchend", unlockVoice, { capture: true, passive: true });
@@ -617,11 +641,11 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
   // Speaks with the app's own voice whatever the setting (used for confirmations and Test voice)
   function sayDirect(text) {
     if (!window.speechSynthesis) return;
-    try { speechSynthesis.cancel(); speechSynthesis.resume(); } catch (_) {}
-    let started = false;
-    const u = applyVoice(new SpeechSynthesisUtterance(text)); u.volume = 1; u.onstart = () => { started = true; }; u.onend = () => { started = true; };
-    speechSynthesis.speak(u); // inside the tap, which iPhone requires
-    setTimeout(() => { if (!started && !speechSynthesis.speaking) { const u2 = applyVoice(new SpeechSynthesisUtterance(text)); speechSynthesis.speak(u2); } }, 700);
+    const busy = speechSynthesis.speaking || speechSynthesis.pending;
+    try { if (busy) speechSynthesis.cancel(); speechSynthesis.resume(); } catch (_) {}
+    const u = applyVoice(new SpeechSynthesisUtterance(text)); u.volume = 1;
+    u.onstart = () => logEv("Speech started"); u.onerror = (e) => logEv("Speech error: " + (e && e.error));
+    if (busy) setTimeout(() => speechSynthesis.speak(u), 150); else speechSynthesis.speak(u); // inside the tap, which iPhone requires
   }
   document.querySelectorAll("[data-voice]").forEach(b => b.addEventListener("click", () => {
     settings.voice = b.dataset.voice; applySettings();
@@ -2323,14 +2347,24 @@ Reply with ONLY a JSON object: {"say": "what to say aloud", "action": null or {"
   // Welcome screen each time the app opens. Phones only allow speech after a tap, so the welcome
   // is spoken when the shopper taps anywhere on it.
   {
-    const w = $("welcome"); w.hidden = false;
-    w.addEventListener("click", () => {
-      w.hidden = true;
-      if (settings.voice === "app") sayDirect("Welcome to your GuideCart! If you need any help, please use our chat.");
-      else if (settings.voice === "sr") $("live").textContent = "Welcome to your GuideCart! If you need any help, please use our chat.";
-      const h = $("home-h"); if (h) h.focus({ preventScroll: true });
-    }, { once: true });
-    setTimeout(() => { try { w.focus(); } catch (_) {} }, 100);
+    const w = $("welcome");
+    (window.__gcErrors || []).forEach(e => logEv("Error: " + e));
+    window.addEventListener("error", (e) => logEv("Error: " + (e.message || "?") + " @" + (e.lineno || "?")));
+    document.addEventListener("gc-welcomed", () => {
+      logEv("Welcome tapped · voice setting: " + settings.voice);
+      const h = $("s-" + current) && $("s-" + current).querySelector("h1"); if (h) h.focus({ preventScroll: true });
+    });
+    const showWelcome = () => { if (talking || walking || stream) return; w.hidden = false; setTimeout(() => { try { w.focus(); } catch (_) {} }, 100); };
+    if (!w.hidden) setTimeout(() => { try { w.focus(); } catch (_) {} }, 100);
+    // A home-screen app on iPhone often comes back from the background without reloading:
+    // show the welcome again and wake the speech engine on the next tap.
+    let hiddenAt = 0;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) { hiddenAt = Date.now(); try { speechSynthesis.cancel(); } catch (_) {} return; }
+      voiceUnlocked = false;
+      if (hiddenAt && Date.now() - hiddenAt > 30000) { logEv("Back from background"); showWelcome(); }
+    });
+    window.addEventListener("pageshow", (e) => { if (e.persisted) { voiceUnlocked = false; showWelcome(); } });
   }
   // Exposed for the arithmetic test (A04)
   window.GuideCartMath = { perUnit, compareTwo };
