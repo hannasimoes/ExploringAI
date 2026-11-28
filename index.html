@@ -449,6 +449,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <button type="button" id="testVoice">🔊 Test voice</button>
       <button type="button" id="voiceCheck">🩺 Voice check</button>
       <button type="button" id="logBtn">📋 Show app log</button>
+      <button type="button" id="logCopy">📄 Copy app log</button>
       <pre id="appLog" class="applog" hidden></pre>
       <p class="muted" id="voiceDiag" style="font-size:.9rem;white-space:pre-wrap" hidden></p>
       <p class="muted" id="voiceNote" style="font-size:.95rem">No sound? On iPhone, check the silent switch on the side of the phone is off and the volume is up.</p>
@@ -481,7 +482,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 27)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 28)</p>
   </section>
 </div>
 
@@ -690,6 +691,13 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     settings.voice = b.dataset.voice; applySettings();
     sayDirect(settings.voice === "sr" ? "OK. GuideCart will stay quiet and VoiceOver will read for you. If you hear nothing, choose Speak to me." : "OK. I'll speak to you.");
   }));
+  $("logCopy").onclick = async () => {
+    const txt = "GuideCart log · " + (document.body.textContent.match(/GuideCart version [^<)]*\)/) || [""])[0] + " · " + navigator.userAgent + "\n" + APPLOG.join("\n");
+    let done = false;
+    try { await navigator.clipboard.writeText(txt); done = true; } catch (_) {}
+    if (!done) { const t = document.createElement("textarea"); t.value = txt; document.body.append(t); t.select(); try { done = document.execCommand("copy"); } catch (_) {} t.remove(); }
+    say(done ? "Log copied. Paste it in your message to Claude." : "Couldn't copy. Take a screenshot of the log instead.");
+  };
   $("logBtn").onclick = async () => {
     const el = $("appLog"); el.hidden = !el.hidden;
     $("logBtn").textContent = el.hidden ? "📋 Show app log" : "📋 Hide app log";
@@ -1175,6 +1183,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const kind = fast ? "fast" : "smart", tryList = goodModel[kind] ? [goodModel[kind]] : MODELS[kind];
     for (const model of tryList) {
       let res;
+      const tq = Date.now();
       try {
         res = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST", signal,
@@ -1182,7 +1191,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
           body: JSON.stringify(Object.assign({ model, max_tokens: maxTokens, messages: (extra && extra.messages) || [{ role: "user", content }] }, extra && extra.system ? { system: extra.system } : {})),
         });
       } catch (_) { lastApiError = "Couldn't reach api.anthropic.com (no connection)."; throw Object.assign(new Error("network"), { code: "network" }); }
-      logEv(`Claude ${model}: HTTP ${res.status}`);
+      logEv(`Claude ${model}: HTTP ${res.status} · ${((Date.now() - tq) / 1000).toFixed(1)}s`);
       if (res.ok) { goodModel[kind] = model; lastApiError = ""; const data = await res.json(); return { model, text: (data.content || []).map(c => c.text || "").join("") }; }
       const body = await res.text().catch(() => "");
       let msg = body; try { msg = JSON.parse(body).error.message; } catch (_) {}
@@ -1787,16 +1796,18 @@ Reply with ONLY JSON:
         const r = await apiVision(
 `You are the eyes of a BLIND shopper holding a phone camera at chest height. They may be in a shop, at home or anywhere (they may be testing at home with products on a table or shelf): treat any products you see exactly as if they were on supermarket shelves. NEVER comment on where they are or say it isn't a shop. This is the camera view now.
 Shopping list: ${JSON.stringify(list)}. Also known: Evian water, Barebells protein bar, Rio Mare tuna.
-"type": "danger" if a person, trolley, box on the floor, step, door or wall is in their walking path within about one step (never a product held up to the camera); "held" if a product is held up to the camera, in a hand, or fills the middle of the picture (read its brand and name); otherwise "other".
+"obstacles": EVERYTHING they could bump into or trip over within about 3 steps: people, trolleys, baskets, boxes, chairs, tables, furniture, display stands, doors, walls, steps, bags on the floor. Nearest first, up to 3, with "steps" (1, 2 or 3) and side. Never a product held up to the camera, and never the shelf, table or counter the products are on.
+"type": "danger" if an obstacle is within about one step right in their path; "held" if a product is held up to the camera, in a hand, or fills the middle of the picture (read its brand and name); otherwise "other".
 "nearby": YOUR MAIN JOB. Every product, bottle, can, jar, box, packet, bar or fruit you can see anywhere in the picture (on a shelf, table, counter, fridge or in a hand), nearest first, up to 4, even small, partly visible or a little blurry. Read the brand on the pack if you can (e.g. "Evian still water", "Barebells protein bar", "Rio Mare tuna"); otherwise describe it ("a water bottle", "a tin of tuna"). Fill this whenever any product is visible, even if you named it before.
 "scene": only if NO product is visible: people or obstacles around, at most 6 words. Never describe the room type (no "living room", "a room", "bedroom", "kitchen").
 JSON only, short values:
-{"nearby": [{"name": "", "side": "left|ahead|right", "shelf": "top|middle|bottom|null", "price": number or null}], "type": "danger|held|other", "name": "the held product or the obstacle, or null", "size": "as printed or null", "list_item": "shopping-list item the held product matches, or null", "side": "left|ahead|right", "price": number or null, "scene": ""}`, c, { fast: true, max: 1024, tokens: 450 });
+{"obstacles": [{"name": "", "side": "left|ahead|right", "steps": 1}], "nearby": [{"name": "", "side": "left|ahead|right", "shelf": "top|middle|bottom|null", "price": number or null}], "type": "danger|held|other", "name": "the held product or the obstacle, or null", "size": "as printed or null", "list_item": "shopping-list item the held product matches, or null", "side": "left|ahead|right", "price": number or null, "scene": ""}`, c, { fast: false, max: 1024, tokens: 500 }); // the smarter model reads products much better
         if (!walking || gen !== walkGen) return;
         guideFails = 0;
         const type = String(r.type || "other"), name = ok(r.name) ? String(r.name) : "";
         const near = (Array.isArray(r.nearby) ? r.nearby : []).filter(n => n && ok(n.name)).slice(0, 4);
-        logEv("Guide: " + type + (name ? " · " + name : "") + (near.length ? " · nearby: " + near.map(n => n.name).join(", ") : ""));
+        const obs = (Array.isArray(r.obstacles) ? r.obstacles : []).filter(o => o && ok(o.name)).slice(0, 3);
+        logEv("Guide: " + type + (name ? " · " + name : "") + (obs.length ? " · obstacles: " + obs.map(o => o.name + " " + o.steps).join(", ") : "") + (near.length ? " · nearby: " + near.map(n => n.name).join(", ") : "") + (r.scene ? " · scene: " + r.scene : ""));
         $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · " + (name || near.map(n => n.name).join(", ") || r.scene || "looking…");
         const sd = ["left", "right"].includes(r.side) ? r.side : "ahead";
         const speakNow = (msg, icon, chime) => {
@@ -1804,12 +1815,22 @@ JSON only, short values:
           $("statusIc").textContent = icon; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
           if (settings.voice === "sr") { $("live").textContent = msg; return; }
           if (settings.voice !== "app" || !window.speechSynthesis) return;
+          if (warned) { setTimeout(() => { if (walking) speechSynthesis.speak(applyVoice(new SpeechSynthesisUtterance(msg))); }, 2200); return; }
           if (chime) { try { speechSynthesis.cancel(); } catch (_) {} beep(990, 90).then(() => { if (walking) speechSynthesis.speak(applyVoice(new SpeechSynthesisUtterance(msg))); }); }
           else { const u = applyVoice(new SpeechSynthesisUtterance(msg)); u.rate = 1.05; speechSynthesis.speak(u); }
         };
         const speaking = () => window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending);
         const now = Date.now();
-        if (type === "danger") warnNow(name ? bare(name.toLowerCase()) : "something", 2, sd);
+        // nearest obstacle within 2 steps that we haven't just warned about (a held product is never an obstacle)
+        const holder = near.length ? /\b(shelf|shelves|table|counter|worktop|desk|fridge|display)\b/i : null;
+        const o1 = type === "held" ? null : obs.find(o => +o.steps <= 2 && !(holder && holder.test(o.name)) && !(announced["obs:" + norm(o.name)] > now - 8000));
+        let warned = 0;
+        if (type === "danger" || o1) {
+          const o = o1 || { name: name || "something", side: r.side, steps: 1 };
+          announced["obs:" + norm(o.name)] = now; warned = +o.steps <= 1 ? 2 : 1;
+          warnNow(bare(String(o.name).toLowerCase()), warned, ["left", "right"].includes(o.side) ? o.side : "ahead");
+        }
+        if (warned === 2) { /* stop: nothing else this time */ }
         else if (type === "held" && name && mode !== "read") {
           const key = norm(name);
           if (key !== lastProduct.key || now - lastProduct.t > 20000) {
@@ -1834,7 +1855,7 @@ JSON only, short values:
             logEv("Said: " + msg);
             try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {}
             speakNow(msg, "★", !!li || !!alg);
-          } else if (fresh.length && !speaking() && now - lastWarn.t > 2500) {
+          } else if (fresh.length && (warned || (!speaking() && now - lastWarn.t > 2500))) {
             const two = fresh.slice(0, 2); two.forEach(n => { announced[norm(n.name)] = now; });
             const msg = two.map(n => { const p = num(n.price); return `${cap(n.name)}, ${["left", "right"].includes(n.side) ? n.side : "ahead"}${p != null ? ", " + pence(p) : ""}.`; }).join(" ");
             lastScene = msg; speakNow(msg, "🛒", false);
