@@ -481,7 +481,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 22)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 23)</p>
   </section>
 </div>
 
@@ -1347,7 +1347,7 @@ Reply with ONLY JSON:
     status("warn", msg);
   }
   function setChip() {
-    const chip = $("camChip"); chip.textContent = walking ? "● Live guide" : "● Live";
+    const chip = $("camChip"); chip.textContent = walking ? (walkClaude ? "● Live guide · Claude" : "● Live guide · phone AI") : "● Live";
     if (viaGlasses) { chip.textContent = (walking ? "🕶 Walk mode" : "🕶 Ray-Ban Meta"); const s = document.createElement("span"); s.className = "glasses-tag"; s.textContent = "preview"; chip.append(s); }
   }
   function stopCamera(silent) {
@@ -1672,6 +1672,7 @@ Reply with ONLY JSON:
   let walkGen = 0;
   async function walkLoop(gen) {
     while (walking && gen === walkGen) {
+      if (apiKey && !apiDown && !claudeVision) { logEv("Claude available again: switching the live guide to Claude"); walkClaude = true; claudeWalkLoop(++walkGen); setChip(); return; }
       await walkStep();
       await sleep(450);
       await nextFrame();
@@ -1834,9 +1835,11 @@ JSON only, short values:
       await sleep(Math.max(300, 2000 - (Date.now() - t0)));
     }
   }
+  let walkClaude = false;
   async function startWalk() {
     if (!stream) { askCamera(startWalk); return; }
     if (apiKey && !apiDown && !claudeVision) {
+      walkClaude = true;
       walking = true; lastHeard = {}; lastScene = ""; stopAim();
       $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
       claudeWalkLoop(++walkGen);
@@ -1845,7 +1848,8 @@ JSON only, short values:
     startPhoneWalk(false);
   }
   async function startPhoneWalk(quiet) {
-    logEv("Walk mode on the phone started");
+    logEv("Live guide on the phone AI started (" + (apiKey ? "Claude paused after an error: " + (lastApiError || "?") : "no Claude key saved in this app") + ")");
+    walkClaude = false;
     const gen = ++walkGen;
     walking = true; lastHeard = {}; stopAim();
     $("walkBtn").setAttribute("aria-pressed", "true"); $("walkBtn").textContent = "■ Stop walk mode"; setChip();
