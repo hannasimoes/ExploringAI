@@ -482,7 +482,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 28)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 29)</p>
   </section>
 </div>
 
@@ -1760,19 +1760,40 @@ Reply with ONLY JSON:
     }
   }
   // Obstacle warning: beep, then a short sentence. Interrupts anything else.
+  // Calm voice for the live guide: one sentence at a time, a pause after each, nothing piles up.
+  // Only "Stop" (something right in front of you) may cut in.
+  let guideQuietUntil = 0;
+  function guideVoice(msg, { urgent = false, tone = 0 } = {}) {
+    if (settings.voice === "sr") { $("live").textContent = msg; return true; }
+    if (settings.voice !== "app" || !window.speechSynthesis) return true;
+    const now = Date.now();
+    if (!urgent && (speechSynthesis.speaking || speechSynthesis.pending || now < guideQuietUntil)) return false;
+    if (urgent) { try { speechSynthesis.cancel(); } catch (_) {} }
+    guideQuietUntil = now + msg.length * 75 + 2500; // in case the phone never says it finished
+    const go = () => {
+      if (!walking) { guideQuietUntil = 0; return; }
+      const u = applyVoice(new SpeechSynthesisUtterance(msg)); u.rate = 1;
+      const done = () => { guideQuietUntil = Date.now() + 1500; };
+      u.onend = done; u.onerror = done; speechSynthesis.speak(u);
+    };
+    if (tone) beep(tone, 100).then(go); else go();
+    return true;
+  }
+  // Obstacle warnings: "Stop" for something right in front; "Careful" only for things ahead, never twice in a row
   function warnNow(name, lvl, sd) {
-    const key = name + ":" + lvl, now = Date.now(), gap = lvl === 2 ? 3500 : 6000;
-    if (lastWarn.key === key && now - lastWarn.t < gap) return;
-    lastWarn = { key, t: now };
+    const now = Date.now(), kind = norm(name);
+    if (lvl === 1 && sd !== "ahead") return false;                 // things beside you are fine at 2 steps
+    if (lastWarn.key === kind && now - lastWarn.t < 15000) return false; // same thing: once every 15 s
+    if (now - lastWarn.t < 6000 && !(lvl === 2 && sd === "ahead")) return false; // at most one warning every 6 s
     const msg = lvl === 2
-      ? (sd === "ahead" ? `Stop. ${cap(name)} right in front of you.` : `Careful, ${name} very close on your ${sd}.`)
-      : (sd === "ahead" ? `Careful, ${name} close ahead.` : `Careful, ${name} close on your ${sd}.`);
+      ? (sd === "ahead" ? `Stop. ${cap(name)} in front of you.` : `${cap(name)} very close, on your ${sd}.`)
+      : `Careful, ${name} ahead.`;
+    const said = guideVoice(msg, { urgent: lvl === 2 && sd === "ahead", tone: lvl === 2 ? 330 : 440 });
+    if (!said) return false;
+    lastWarn = { key: kind, t: now };
     $("statusIc").textContent = "⚠"; $("statusText").textContent = msg; $("statusBox").classList.add("error");
     logEv("Warning: " + msg);
-    if (settings.voice === "sr") { $("live").textContent = msg; return; }
-    if (settings.voice === "off" || !window.speechSynthesis) return;
-    try { speechSynthesis.cancel(); } catch (_) {}
-    beep(lvl === 2 ? 330 : 440, 120).then(() => { if (!walking) return; const u = applyVoice(new SpeechSynthesisUtterance(msg)); u.rate = 1.1; speechSynthesis.speak(u); });
+    return true;
   }
   // The live guide with Claude: one small photo about every 2 seconds. Claude says what is close,
   // what is around, and names a product held up to the camera. Nothing runs on the phone itself.
@@ -1784,6 +1805,7 @@ Reply with ONLY JSON:
   }
   async function claudeWalkLoop(gen) {
     logEv("Live guide with Claude started");
+    guideQuietUntil = Date.now() + 4500; // let "Camera on…" finish first
     $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · looking…";
     while (walking && gen === walkGen) {
       if (!stream || busy || talking || document.hidden || !video.videoWidth) { await sleep(600); continue; }
@@ -1812,12 +1834,9 @@ JSON only, short values:
         const sd = ["left", "right"].includes(r.side) ? r.side : "ahead";
         const speakNow = (msg, icon, chime) => {
           if (/\bnot (a|in a|an?) ?(supermarket|shop|store|grocery)|isn'?t (a )?(supermarket|shop|store)|no (supermarket|shop|store)\b/i.test(msg)) { logEv("Skipped: " + msg); return; }
+          if (!guideVoice(msg, { tone: chime ? 990 : 0 })) return false; // still talking: say it next time instead of piling up
           $("statusIc").textContent = icon; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
-          if (settings.voice === "sr") { $("live").textContent = msg; return; }
-          if (settings.voice !== "app" || !window.speechSynthesis) return;
-          if (warned) { setTimeout(() => { if (walking) speechSynthesis.speak(applyVoice(new SpeechSynthesisUtterance(msg))); }, 2200); return; }
-          if (chime) { try { speechSynthesis.cancel(); } catch (_) {} beep(990, 90).then(() => { if (walking) speechSynthesis.speak(applyVoice(new SpeechSynthesisUtterance(msg))); }); }
-          else { const u = applyVoice(new SpeechSynthesisUtterance(msg)); u.rate = 1.05; speechSynthesis.speak(u); }
+          return true;
         };
         const speaking = () => window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending);
         const now = Date.now();
@@ -1827,10 +1846,9 @@ JSON only, short values:
         let warned = 0;
         if (type === "danger" || o1) {
           const o = o1 || { name: name || "something", side: r.side, steps: 1 };
-          announced["obs:" + norm(o.name)] = now; warned = +o.steps <= 1 ? 2 : 1;
-          warnNow(bare(String(o.name).toLowerCase()), warned, ["left", "right"].includes(o.side) ? o.side : "ahead");
+          if (warnNow(bare(String(o.name).toLowerCase()), +o.steps <= 1 ? 2 : 1, ["left", "right"].includes(o.side) ? o.side : "ahead")) { announced["obs:" + norm(o.name)] = now; warned = 1; }
         }
-        if (warned === 2) { /* stop: nothing else this time */ }
+        if (warned) { /* one sentence per look: products next time */ }
         else if (type === "held" && name && mode !== "read") {
           const key = norm(name);
           if (key !== lastProduct.key || now - lastProduct.t > 20000) {
@@ -1840,10 +1858,10 @@ JSON only, short values:
           }
         } else if (near.length) {
           // Products on the shelves: list items first (with a chime), then up to 2 other products not said in the last 40 s
-          const fresh = near.filter(n => !(announced[norm(n.name)] > now - 40000));
+          const fresh = near.filter(n => !(announced[norm(n.name)] > now - 60000));
           const hit = fresh.map(n => ({ n, li: findOnList(n.name), st: testStoreItem(n.name) })).find(x => x.li || x.st);
           if (hit) {
-            const { n, li, st } = hit; announced[norm(n.name)] = now;
+            const { n, li, st } = hit;
             const nsd = ["left", "right"].includes(n.side) ? n.side : "ahead", side2 = nsd === "ahead" ? "ahead" : "on your " + nsd;
             const shelf = ["top", "middle", "bottom"].includes(n.shelf) ? `, ${n.shelf} shelf` : "";
             const price = st ? st.price : num(n.price);
@@ -1852,20 +1870,18 @@ JSON only, short values:
             const msg = alg ? `${nm}, ${side2}${shelf}. ${li ? "It's on your list, but it" : "It"} contains ${alg}. You're allergic to ${alg}. Look for another option.`
               : li ? `${nm}, ${side2}${shelf}.${price != null ? " " + pence(price) + "." : ""} On your list. ${nsd === "ahead" ? "Reach straight ahead" : "Reach to your " + nsd}, and hold it up to the camera.`
               : `${nm}, ${side2}${shelf}.${price != null ? " " + pence(price) + "." : ""}`;
-            logEv("Said: " + msg);
-            try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {}
-            speakNow(msg, "★", !!li || !!alg);
-          } else if (fresh.length && (warned || (!speaking() && now - lastWarn.t > 2500))) {
-            const two = fresh.slice(0, 2); two.forEach(n => { announced[norm(n.name)] = now; });
+            if (speakNow(msg, "★", !!li || !!alg)) { announced[norm(n.name)] = now; logEv("Said: " + msg); try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {} }
+          } else if (fresh.length) {
+            const two = fresh.slice(0, 1);
             const msg = two.map(n => { const p = num(n.price); return `${cap(n.name)}, ${["left", "right"].includes(n.side) ? n.side : "ahead"}${p != null ? ", " + pence(p) : ""}.`; }).join(" ");
-            lastScene = msg; speakNow(msg, "🛒", false);
+            if (speakNow(msg, "🛒", false)) { two.forEach(n => { announced[norm(n.name)] = now; }); lastScene = msg; logEv("Said: " + msg); }
           }
         } else {
           const msg = String(r.scene || "").trim();
           const roomy = /\b(room|bedroom|kitchen|lounge|office|house|home|indoor|interior)\b/i.test(msg);
           if (msg && !roomy && norm(msg) !== norm(lastScene) && !(announced.scene > now - 25000) && now - lastWarn.t > 2500 && !speaking()) {
             announced.scene = now;
-            lastScene = msg; announced["scene:" + norm(msg)] = now; speakNow(msg, "🚶", false);
+            if (speakNow(msg, "🚶", false)) { lastScene = msg; } else announced.scene = 0;
           }
         }
       } catch (e) {
