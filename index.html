@@ -481,7 +481,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 24)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 25)</p>
   </section>
 </div>
 
@@ -1193,7 +1193,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     const list = pending().map(i => i.name);
     if (hasVision()) {
       const prompt =
-`You are the vision part of an app for BLIND shoppers. The image is from their phone camera in a supermarket. The user cannot see the screen or the product, so never ask them to look at anything.
+`You are the vision part of an app for BLIND shoppers. The image is from their phone camera, usually in a shop but it may be at home or anywhere (testing is fine). Never comment on where they are. The user cannot see the screen or the product, so never ask them to look at anything.
 Shopping list: ${JSON.stringify(list)}.
 Identify the single main product in view. Do not guess beyond what is visible.
 Confidence: "high" when the product name is clearly printed or the item is unmistakable (e.g. a clear photo of bananas or a labelled milk bottle); "medium" when you are inferring from shape or a partly visible label; "low" only when the image is genuinely unclear.
@@ -1768,7 +1768,7 @@ Reply with ONLY JSON:
         c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
         const list = pending().map(i => i.name);
         const r = await apiVision(
-`You are the eyes of a BLIND shopper in a supermarket, holding a phone camera at chest height. This is the camera view now.
+`You are the eyes of a BLIND shopper holding a phone camera at chest height. They may be in a shop, at home or anywhere (they may be testing at home with products on a table or shelf): treat any products you see exactly as if they were on supermarket shelves. NEVER comment on where they are or say it isn't a shop. This is the camera view now.
 Shopping list: ${JSON.stringify(list)}. Also known: Evian water, Barebells protein bar, Rio Mare tuna.
 "type": "danger" if a person, trolley, box on the floor, step, door or wall is in their walking path within about one step (never a product held up to the camera); "held" if a product is held up to the camera, in a hand, or fills the middle of the picture (read its brand and name); otherwise "other".
 "nearby": EVERY product you can recognise on the shelves, fridges or displays, nearest first, up to 4, even small, partly visible or a little blurry. Use brand and product (e.g. "Evian still water", "Heinz baked beans"). Always fill this when products are visible, even if you named them before.
@@ -1783,6 +1783,7 @@ JSON only, short values:
         $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · " + (name || near.map(n => n.name).join(", ") || r.scene || "looking…");
         const sd = ["left", "right"].includes(r.side) ? r.side : "ahead";
         const speakNow = (msg, icon, chime) => {
+          if (/\bnot (a|in a|an?) ?(supermarket|shop|store|grocery)|isn'?t (a )?(supermarket|shop|store)|no (supermarket|shop|store)\b/i.test(msg)) { logEv("Skipped: " + msg); return; }
           $("statusIc").textContent = icon; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
           if (settings.voice === "sr") { $("live").textContent = msg; return; }
           if (settings.voice !== "app" || !window.speechSynthesis) return;
