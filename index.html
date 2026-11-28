@@ -481,7 +481,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 23)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 24)</p>
   </section>
 </div>
 
@@ -1750,7 +1750,7 @@ Reply with ONLY JSON:
   }
   // The live guide with Claude: one small photo about every 2 seconds. Claude says what is close,
   // what is around, and names a product held up to the camera. Nothing runs on the phone itself.
-  let lastProduct = { key: "", t: 0 }, guideFails = 0, lastListSeen = { key: "", t: 0 };
+  let lastProduct = { key: "", t: 0 }, guideFails = 0, lastListSeen = { key: "", t: 0 }, announced = {};
   function findOnList(text) {
     if (!ok(text)) return null;
     const t = String(text).toLowerCase(), st = testStoreItem(t), w = core(t);
@@ -1770,59 +1770,61 @@ Reply with ONLY JSON:
         const r = await apiVision(
 `You are the eyes of a BLIND shopper in a supermarket, holding a phone camera at chest height. This is the camera view now.
 Shopping list: ${JSON.stringify(list)}. Also known: Evian water, Barebells protein bar, Rio Mare tuna.
-Last thing you said: ${JSON.stringify(lastScene || "nothing yet")}.
-Pick the ONE most useful thing to tell them now, in this order:
-1. "danger": a person, trolley, box on the floor, step, door or wall in their walking path, within about one step. Never a product held up to the camera.
-2. "held": a product held up to the camera, in a hand, or filling the middle of the picture, even if very close or a bit blurry. Read the brand and name on the pack.
-3. "list": a shopping-list item (any brand or size of it) or one of the known products, visible anywhere: on a shelf, in a fridge, small or far away.
-4. "products": products on the shelves whose names you can read.
-5. "scene": what is around them (aisle, shelves, people).
-6. "none": nothing new since the last thing you said.
+"type": "danger" if a person, trolley, box on the floor, step, door or wall is in their walking path within about one step (never a product held up to the camera); "held" if a product is held up to the camera, in a hand, or fills the middle of the picture (read its brand and name); otherwise "other".
+"nearby": EVERY product you can recognise on the shelves, fridges or displays, nearest first, up to 4, even small, partly visible or a little blurry. Use brand and product (e.g. "Evian still water", "Heinz baked beans"). Always fill this when products are visible, even if you named them before.
+"scene": what is around, at most 6 words (e.g. "Drinks aisle. Person on the left.").
 JSON only, short values:
-{"type": "danger|held|list|products|scene|none", "name": "brand and product, e.g. Evian still water; or the obstacle", "size": "as printed or null", "list_item": "the exact shopping-list item it matches, or null", "side": "left|ahead|right", "shelf": "top|middle|bottom|null", "price": price on the pack or shelf label as a number, or null, "say": "for products or scene: at most 12 words with left/ahead/right and prices, e.g. Heinz beans, left, £1.20. Kellogg's cornflakes, right."}`, c, { fast: true, max: 800, tokens: 400 });
+{"type": "danger|held|other", "name": "the held product or the obstacle, or null", "size": "as printed or null", "list_item": "shopping-list item the held product matches, or null", "side": "left|ahead|right", "price": number or null, "nearby": [{"name": "", "side": "left|ahead|right", "shelf": "top|middle|bottom|null", "price": number or null}], "scene": ""}`, c, { fast: true, max: 800, tokens: 450 });
         if (!walking || gen !== walkGen) return;
         guideFails = 0;
-        const type = String(r.type || "none"), name = ok(r.name) ? String(r.name) : "";
-        logEv("Guide: " + type + (name ? " · " + name : "") + (r.list_item && r.list_item !== "null" ? " · list: " + r.list_item : ""));
-        $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · " + (name || r.say || "looking…");
+        const type = String(r.type || "other"), name = ok(r.name) ? String(r.name) : "";
+        const near = (Array.isArray(r.nearby) ? r.nearby : []).filter(n => n && ok(n.name)).slice(0, 4);
+        logEv("Guide: " + type + (name ? " · " + name : "") + (near.length ? " · nearby: " + near.map(n => n.name).join(", ") : ""));
+        $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · " + (name || near.map(n => n.name).join(", ") || r.scene || "looking…");
         const sd = ["left", "right"].includes(r.side) ? r.side : "ahead";
+        const speakNow = (msg, icon, chime) => {
+          $("statusIc").textContent = icon; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
+          if (settings.voice === "sr") { $("live").textContent = msg; return; }
+          if (settings.voice !== "app" || !window.speechSynthesis) return;
+          if (chime) { try { speechSynthesis.cancel(); } catch (_) {} beep(990, 90).then(() => { if (walking) speechSynthesis.speak(applyVoice(new SpeechSynthesisUtterance(msg))); }); }
+          else { const u = applyVoice(new SpeechSynthesisUtterance(msg)); u.rate = 1.05; speechSynthesis.speak(u); }
+        };
+        const speaking = () => window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending);
+        const now = Date.now();
         if (type === "danger") warnNow(name ? bare(name.toLowerCase()) : "something", 2, sd);
         else if (type === "held" && name && mode !== "read") {
-          const key = norm(name); const now = Date.now();
+          const key = norm(name);
           if (key !== lastProduct.key || now - lastProduct.t > 20000) {
-            lastProduct = { key, t: now };
+            lastProduct = { key, t: now }; announced[key] = now;
             const li = findOnList(r.list_item) || findOnList(name);
             showMatch({ readable: true, product: name, size: r.size, price: r.price, list_match: li ? li.name : null, confidence: "high", auto: true });
           }
-        } else if (type === "list" && name) {
-          let lsItem = findOnList(r.list_item) || findOnList(name);
-          if (!lsItem && testStoreItem(name)) lsItem = { name: testStoreItem(name).name, offList: true };
-          if (!lsItem) lsItem = { name, offList: true };
-          const now = Date.now(), key = lsItem.name + ":" + sd + ":" + r.shelf;
-          if (key !== lastListSeen.key || now - lastListSeen.t > 10000) {
-            lastListSeen = { key, t: now };
-            const side2 = sd === "ahead" ? "ahead" : "on your " + sd;
-            const shelf = ["top", "middle", "bottom"].includes(r.shelf) ? `, ${r.shelf} shelf` : "";
-            const st = testStoreItem(lsItem.name) || testStoreItem(name);
-            const price = st ? st.price : num(r.price);
+        } else if (near.length) {
+          // Products on the shelves: list items first (with a chime), then up to 2 other products not said in the last 40 s
+          const fresh = near.filter(n => !(announced[norm(n.name)] > now - 40000));
+          const hit = fresh.map(n => ({ n, li: findOnList(n.name), st: testStoreItem(n.name) })).find(x => x.li || x.st);
+          if (hit) {
+            const { n, li, st } = hit; announced[norm(n.name)] = now;
+            const nsd = ["left", "right"].includes(n.side) ? n.side : "ahead", side2 = nsd === "ahead" ? "ahead" : "on your " + nsd;
+            const shelf = ["top", "middle", "bottom"].includes(n.shelf) ? `, ${n.shelf} shelf` : "";
+            const price = st ? st.price : num(n.price);
             const alg = st && (st.allergens || []).filter(x => ALLERGIES.includes(x)).join(" and ");
-            const nm = cap(st ? st.name : name);
-            const msg = alg ? `${nm}, ${side2}${shelf}. ${lsItem.offList ? "It" : "It's on your list, but it"} contains ${alg}. You're allergic to ${alg}. Look for another option.`
-              : lsItem.offList ? `${nm}, ${side2}${shelf}.${price != null ? " " + pence(price) + "." : ""}`
-              : `${nm}, ${side2}${shelf}.${price != null ? " " + pence(price) + "." : ""} On your list. Reach to your ${sd === "ahead" ? "front" : sd}, and hold it up to the camera.`;
-            $("statusIc").textContent = "★"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
+            const nm = cap(st ? st.name : n.name);
+            const msg = alg ? `${nm}, ${side2}${shelf}. ${li ? "It's on your list, but it" : "It"} contains ${alg}. You're allergic to ${alg}. Look for another option.`
+              : li ? `${nm}, ${side2}${shelf}.${price != null ? " " + pence(price) + "." : ""} On your list. ${nsd === "ahead" ? "Reach straight ahead" : "Reach to your " + nsd}, and hold it up to the camera.`
+              : `${nm}, ${side2}${shelf}.${price != null ? " " + pence(price) + "." : ""}`;
+            logEv("Said: " + msg);
             try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {}
-            if (settings.voice === "sr") $("live").textContent = msg;
-            else if (settings.voice === "app" && window.speechSynthesis) { try { speechSynthesis.cancel(); } catch (_) {} beep(990, 90).then(() => { if (!walking) return; speechSynthesis.speak(applyVoice(new SpeechSynthesisUtterance(msg))); }); }
+            speakNow(msg, "★", !!li || !!alg);
+          } else if (fresh.length && !speaking() && now - lastWarn.t > 2500) {
+            const two = fresh.slice(0, 2); two.forEach(n => { announced[norm(n.name)] = now; });
+            const msg = two.map(n => { const p = num(n.price); return `${cap(n.name)}, ${["left", "right"].includes(n.side) ? n.side : "ahead"}${p != null ? ", " + pence(p) : ""}.`; }).join(" ");
+            lastScene = msg; speakNow(msg, "🛒", false);
           }
-        } else if (type === "products" || type === "scene") {
-          const msg = String(r.say || name || "").trim();
-          const speaking = window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending);
-          if (msg && norm(msg) !== norm(lastScene) && Date.now() - lastWarn.t > 2500 && !speaking) {
-            lastScene = msg;
-            $("statusIc").textContent = "🚶"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
-            if (settings.voice === "sr") $("live").textContent = msg;
-            else if (settings.voice === "app" && window.speechSynthesis) { const u = applyVoice(new SpeechSynthesisUtterance(msg)); u.rate = 1.05; speechSynthesis.speak(u); }
+        } else {
+          const msg = String(r.scene || "").trim();
+          if (msg && norm(msg) !== norm(lastScene) && !(announced["scene:" + norm(msg)] > now - 20000) && now - lastWarn.t > 2500 && !speaking()) {
+            lastScene = msg; announced["scene:" + norm(msg)] = now; speakNow(msg, "🚶", false);
           }
         }
       } catch (e) {
