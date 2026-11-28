@@ -277,7 +277,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       u.onstart = function () { window.__gcWelcomeAuto = true; };
       try { speechSynthesis.speak(u); } catch (_) {}
       // blocked (iPhone without a tap)? clear it so the tap speaks straight away
-      setTimeout(function () { if (!window.__gcWelcomeAuto) { try { speechSynthesis.cancel(); } catch (_) {} } }, 1500);
+      setTimeout(function () { if (!window.__gcWelcomeAuto && !w.hidden && !window.__gcWelcomeSpoken) { try { speechSynthesis.cancel(); } catch (_) {} } }, 1500); // only if nobody has tapped yet
     }, 300);
   })();
   </script>
