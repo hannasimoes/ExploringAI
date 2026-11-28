@@ -481,7 +481,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 26)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 27)</p>
   </section>
 </div>
 
@@ -1352,8 +1352,8 @@ Reply with ONLY JSON:
     try { await video.play(); } catch (_) { await new Promise(r => setTimeout(r, 300)); await video.play().catch(() => {}); }
     setChip(); $("camBtn").textContent = "■ Stop camera";
     $("aimBtn").hidden = false;
-    status("ok", (viaGlasses ? "Glasses connected." : "Camera on.") + " I'll warn you about anything close and name what I see.");
-    if (!afterCamera) setTimeout(() => { if (stream && !walking) startWalk(); }, 300);
+    status("ok", (viaGlasses ? "Glasses connected." : "Camera on.") + (mode === "find" ? " I'll warn you about anything close and name the products I see." : mode === "read" ? " Hold the text in front of the camera. I'll read it when it's clear." : " Point at price label " + (nextLabel() || "A") + ", then tap Read price label."));
+    if (!afterCamera) setTimeout(() => modeCamera(), 300);
     return true;
   }
   function noLiveCamera(why) {
@@ -1788,10 +1788,10 @@ Reply with ONLY JSON:
 `You are the eyes of a BLIND shopper holding a phone camera at chest height. They may be in a shop, at home or anywhere (they may be testing at home with products on a table or shelf): treat any products you see exactly as if they were on supermarket shelves. NEVER comment on where they are or say it isn't a shop. This is the camera view now.
 Shopping list: ${JSON.stringify(list)}. Also known: Evian water, Barebells protein bar, Rio Mare tuna.
 "type": "danger" if a person, trolley, box on the floor, step, door or wall is in their walking path within about one step (never a product held up to the camera); "held" if a product is held up to the camera, in a hand, or fills the middle of the picture (read its brand and name); otherwise "other".
-"nearby": EVERY product you can recognise on the shelves, fridges or displays, nearest first, up to 4, even small, partly visible or a little blurry. Use brand and product (e.g. "Evian still water", "Heinz baked beans"). Always fill this when products are visible, even if you named them before.
-"scene": what is around, at most 6 words (e.g. "Drinks aisle. Person on the left.").
+"nearby": YOUR MAIN JOB. Every product, bottle, can, jar, box, packet, bar or fruit you can see anywhere in the picture (on a shelf, table, counter, fridge or in a hand), nearest first, up to 4, even small, partly visible or a little blurry. Read the brand on the pack if you can (e.g. "Evian still water", "Barebells protein bar", "Rio Mare tuna"); otherwise describe it ("a water bottle", "a tin of tuna"). Fill this whenever any product is visible, even if you named it before.
+"scene": only if NO product is visible: people or obstacles around, at most 6 words. Never describe the room type (no "living room", "a room", "bedroom", "kitchen").
 JSON only, short values:
-{"type": "danger|held|other", "name": "the held product or the obstacle, or null", "size": "as printed or null", "list_item": "shopping-list item the held product matches, or null", "side": "left|ahead|right", "price": number or null, "nearby": [{"name": "", "side": "left|ahead|right", "shelf": "top|middle|bottom|null", "price": number or null}], "scene": ""}`, c, { fast: true, max: 800, tokens: 450 });
+{"nearby": [{"name": "", "side": "left|ahead|right", "shelf": "top|middle|bottom|null", "price": number or null}], "type": "danger|held|other", "name": "the held product or the obstacle, or null", "size": "as printed or null", "list_item": "shopping-list item the held product matches, or null", "side": "left|ahead|right", "price": number or null, "scene": ""}`, c, { fast: true, max: 1024, tokens: 450 });
         if (!walking || gen !== walkGen) return;
         guideFails = 0;
         const type = String(r.type || "other"), name = ok(r.name) ? String(r.name) : "";
@@ -1841,7 +1841,9 @@ JSON only, short values:
           }
         } else {
           const msg = String(r.scene || "").trim();
-          if (msg && norm(msg) !== norm(lastScene) && !(announced["scene:" + norm(msg)] > now - 20000) && now - lastWarn.t > 2500 && !speaking()) {
+          const roomy = /\b(room|bedroom|kitchen|lounge|office|house|home|indoor|interior)\b/i.test(msg);
+          if (msg && !roomy && norm(msg) !== norm(lastScene) && !(announced.scene > now - 25000) && now - lastWarn.t > 2500 && !speaking()) {
+            announced.scene = now;
             lastScene = msg; announced["scene:" + norm(msg)] = now; speakNow(msg, "🚶", false);
           }
         }
@@ -1894,7 +1896,7 @@ JSON only, short values:
     if (document.hidden) { if (walking) stopWalk(true); return; }
     const tr = stream && stream.getVideoTracks()[0];
     if (tr && tr.readyState === "ended") { stopCamera(true); if (current === "shop") startCamera(); }
-    else if (stream && !walking && current === "shop") startWalk();
+    else if (stream && current === "shop") modeCamera();
   });
 
   function grab() {
@@ -2049,13 +2051,41 @@ JSON only, short values:
   // ---------- Find mode (M05, M06) ----------
   let mode = "find", busy = false, awaitingConfirm = false;
   function shopIntro() {
-    if (mode === "read") return "Read text. Point the camera at a menu, a promotion sign or a leaflet, about 30 centimetres away, then tap Read text. I'll give you a short summary first.";
+    if (mode === "read") return stream && ((apiKey && !apiDown) || claudeVision)
+      ? "Read text. Hold the menu, sign or leaflet in front of the camera, about 30 centimetres away. I'll read it as soon as it's clear."
+      : "Read text. Point the camera at a menu, a promotion sign or a leaflet, about 30 centimetres away, then tap Read text.";
     return mode === "find"
       ? "Find product."
       : "Compare prices. Point at price label A.";
   }
+  // What the live camera does in each mode: Find = live guide; Read = waits for text and reads it; Compare = quiet
+  function modeCamera() {
+    if (!stream) return;
+    if (mode === "find") { readWatchGen++; if (!walking) startWalk(); }
+    else { if (walking) stopWalk(true); if (mode === "read") startReadWatch(); else readWatchGen++; }
+  }
+  let readWatchGen = 0, lastReadAt = 0;
+  async function startReadWatch() {
+    const gen = ++readWatchGen; let lastHint = 0;
+    if (!(apiKey && !apiDown) && !claudeVision) return; // without Claude: tap Read text
+    logEv("Read text: waiting for text");
+    while (gen === readWatchGen && stream && mode === "read") {
+      await sleep(1800);
+      if (gen !== readWatchGen || !stream || mode !== "read") return;
+      if (busy || talking || document.hidden || !video.videoWidth || Date.now() - lastReadAt < 12000) continue;
+      try {
+        const vw = video.videoWidth, vh = video.videoHeight, sc = Math.min(1, 640 / Math.max(vw, vh));
+        const c = document.createElement("canvas"); c.width = Math.round(vw * sc); c.height = Math.round(vh * sc);
+        c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+        const r = await apiVision(`A blind person is holding printed text (a menu, sign, leaflet, label or screen) in front of the phone camera. Is there printed text in the middle of the picture that is big and sharp enough to read? Ignore the room around it. JSON: {"ready": true or false, "hint": "if not ready, at most 6 words: move closer, move back, hold still, turn it round, or null"}`, c, { fast: true, tokens: 80 });
+        if (gen !== readWatchGen || mode !== "read") return;
+        if (r.ready) { lastReadAt = Date.now(); logEv("Read text: text ready, reading"); await runCheck(); lastReadAt = Date.now(); }
+        else if (ok(r.hint) && Date.now() - lastHint > 6000 && !(window.speechSynthesis && speechSynthesis.speaking)) { lastHint = Date.now(); say(cap(String(r.hint).replace(/\.$/, "")) + "."); }
+      } catch (e) { logEv("Read text watch: " + (e && (e.code || e.message))); await sleep(2000); }
+    }
+  }
   function setMode(m, quiet) {
-    mode = m; ["Find", "Compare", "Read"].forEach(k => $("mode" + k).setAttribute("aria-pressed", String(m === k.toLowerCase())));
+    mode = m; setTimeout(modeCamera, 0); ["Find", "Compare", "Read"].forEach(k => $("mode" + k).setAttribute("aria-pressed", String(m === k.toLowerCase())));
     $("checkBtn").textContent = m === "find" ? "📷 Check product" : m === "read" ? "📖 Read text" : "📷 Read price label";
     $("findResult").hidden = m !== "find"; $("compareArea").hidden = m !== "compare"; $("readResult").hidden = m !== "read";
     steady = 0;
@@ -2084,7 +2114,6 @@ JSON only, short values:
     if (busy) return;
     const c = canvas || (stream && video.videoWidth ? grab() : null);
     if (!c) { $("photoInput").click(); return; }
-    if (mode === "find" && !pending().length) { status("warn", "Your list is empty."); return; }
     const q = isSample || mode === "read" ? null : imageQuality(c);
     if (q) { status("warn", q, { retry: () => runCheck() }); return; }
     setBusy(true);
@@ -2216,7 +2245,9 @@ JSON only, short values:
     labels[slot] = { product: r.product || "", price: num(r.price), quantity: num(r.quantity), unit: UNIT[String(r.unit || "").toLowerCase()] ? String(r.unit).toLowerCase() : "", confirmed: false };
     renderCompare();
     const L = labels[slot];
-    status("ok", `${L.price != null ? money(L.price) : "No price"}, ${L.quantity != null && L.unit ? L.quantity + " " + ({ l: "litres", ml: "ml", kg: "kilos", g: "grams", each: "items" }[L.unit] || L.unit) : "no size"}. Confirm?`);
+    const what = `${L.price != null ? money(L.price) : "No price"}, ${L.quantity != null && L.unit ? L.quantity + " " + ({ l: "litres", ml: "ml", kg: "kilos", g: "grams", each: "items" }[L.unit] || L.unit) : "no size"}`;
+    status("ok", `Label ${slot}${L.product ? ", " + L.product : ""}: ${what}. If that's right, tap Confirm values, just below. If not, change the numbers.`);
+    setTimeout(() => { const b = [...$("card" + slot).querySelectorAll("button")].find(x => /Confirm values/.test(x.textContent)); if (b) try { b.focus({ preventScroll: false }); } catch (_) {} }, 400);
   }
   const num = (v) => { const n = parseFloat(v); return isFinite(n) ? n : null; };
   function renderCompare(speakVerdict) {
@@ -2233,7 +2264,7 @@ JSON only, short values:
       const row = document.createElement("div"); row.className = "row2";
       const ok = document.createElement("button"); ok.type = "button"; ok.className = L.confirmed ? "" : "primary"; ok.style.minHeight = "56px"; ok.style.fontSize = "1rem";
       ok.textContent = L.confirmed ? "✓ Confirmed" : "Confirm values";
-      ok.onclick = () => { L.confirmed = true; renderCompare(true); if (!(labels.A && labels.B && labels.A.confirmed && labels.B.confirmed)) say(`Label ${s} confirmed.`); };
+      ok.onclick = () => { L.confirmed = true; renderCompare(true); if (!(labels.A && labels.B && labels.A.confirmed && labels.B.confirmed)) say(`Label ${s} confirmed. ` + (!labels.A || !labels.B ? `Now read label ${nextLabel()}: ${stream ? "point at it and tap Read price label" : "tap Sample photo or Read price label"}.` : `Now confirm label ${s === "A" ? "B" : "A"}.`)); };
       const re = document.createElement("button"); re.type = "button"; re.style.minHeight = "56px"; re.style.fontSize = "1rem"; re.textContent = "↻ Read again";
       re.onclick = () => { labels[s] = null; if (s === "A" && labels.B) { labels.A = labels.B; labels.B = null; } renderCompare(); status("info", `Point at label ${nextLabel()}.`); };
       row.append(ok, re); card.append(row);
@@ -2385,7 +2416,7 @@ JSON only, short values:
     $("dictBox").hidden = false; const t = $("dictIn"); t.value = "";
     if (inTap) { try { t.focus(); } catch (_) {} }
     logEv("Dictation box opened" + (why ? " (" + why + ")" : ""));
-    say(inTap ? "Tap the microphone on the keyboard, ask your question, then tap Send." : "On this phone, voice questions use the keyboard. Tap the question box, then the microphone key.");
+    say(inTap ? "Ask your question with the microphone on the keyboard, then tap Send." : "On this phone, voice questions use the keyboard. Tap the question box, then the microphone key.");
   }
   let dictating = false;
   async function sendDictation() {
@@ -2506,7 +2537,7 @@ Reply with ONLY a JSON object: {"say": "what to say aloud", "action": null or {"
     if (talking && listening && talkRec) { try { talkRec.stop(); } catch (_) {} return; } // "Done, send"
     if (talking) { stopTalking("Stopped."); return; }
     openTalkPanel();
-    if (!SR || srBroken) { startDictation(true, SR ? "voice recognition didn't work before" : "no voice recognition"); return; }
+    if (!SR || srBroken || isApple) { startDictation(true, isApple ? "iPhone: keyboard microphone" : SR ? "voice recognition didn't work before" : "no voice recognition"); return; }
     try { speechSynthesis.cancel(); } catch (_) {}
     talking = true; typedChat = false; silentTurns = 0; setTalkButtons(true);
     talkTurn(true); // mic starts now, inside the tap; the live guide pauses while you talk
