@@ -481,7 +481,7 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
       <p class="muted" id="apiNote" style="font-size:.95rem"></p>
     </div>
     <button type="button" id="showOnb">Show introduction again</button>
-    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-27 (update 21)</p>
+    <p class="muted" style="font-size:.9rem;text-align:center">GuideCart version 2026-11-28 (update 22)</p>
   </section>
 </div>
 
@@ -1178,10 +1178,10 @@ nav.tabs button[aria-current="page"] { background: var(--soft); color: var(--pri
     }
     throw { code: "upstream_error" };
   }
-  async function apiVision(prompt, canvas, { fast = false, signal, max } = {}) {
+  async function apiVision(prompt, canvas, { fast = false, signal, max, tokens } = {}) {
     const r = await apiCall([
       { type: "image", source: { type: "base64", media_type: "image/jpeg", data: smallJpeg(canvas, max || (fast ? 640 : 1280)) } },
-      { type: "text", text: prompt + "\nReply with ONLY the JSON object." }], fast, fast ? 300 : 1200, signal);
+      { type: "text", text: prompt + "\nReply with ONLY the JSON object." }], fast, tokens || (fast ? 300 : 1200), signal);
     return parseJSON(r.text);
   }
   async function visionJSON(prompt, canvas, opts) {
@@ -1766,58 +1766,56 @@ Reply with ONLY JSON:
         const c = document.createElement("canvas"); c.width = Math.round(vw * sc); c.height = Math.round(vh * sc);
         c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
         const list = pending().map(i => i.name);
-        const watch = [...new Set([...list, ...TEST_STORE.map(t => t.name + " (" + t.keys[0] + ")")])];
         const r = await apiVision(
-`You are the eyes of a BLIND person in a shop, holding a phone camera upright at chest height. This is the camera view right now.
-Shopping list: ${JSON.stringify(list)}. Last thing you said: ${JSON.stringify(lastScene || "nothing yet")}.
-Products to look for (their shopping list, plus test products): ${JSON.stringify(watch)}. A list item matches any brand or size of that product (e.g. "milk" matches any milk, "pasta" any pasta).
-0. MOST IMPORTANT: "list_seen". Look for any of the products to look for anywhere in the picture: on a shelf, in a fridge, on a display, in a hand, even small, far away, partly visible or a little blurry from movement. Read brand names on the packs (Evian, Barebells, Rio Mare). If you see one, return {"item": its name from the list above, "side": "left|ahead|right", "shelf": "top|middle|bottom|floor", "steps": rough number of steps away (0 if within reach), "price": the price on its shelf label as a number if you can read it, else null}. Otherwise null.
-1. "product": if a product (a bottle, can, box, packet, bar, fruit...) is held up to the camera, is in a hand, or is the main thing in the middle of the picture, name it, even if it is very close or fills the picture. Read the brand and name from the pack. Otherwise null.
-2. "near": obstacles in their WALKING PATH only. "very_close" if a person, trolley, box on the floor, chair, display stand, door, wall, step or the end of a shelf is within about one step; "close" if about two steps away; otherwise "none". A product held up to the camera is NEVER an obstacle: when "product" is set, "near" is "none". Shelves along the side do not count.
-3. "say": when the camera points at shelves or products, NAME THE PRODUCTS you can read (brand and type, at most 2, with left, ahead or right, and the shelf price if readable), e.g. "Heinz baked beans, left, £1.20. Kellogg's cornflakes, right." Otherwise describe what is around, e.g. "Drinks aisle, right. Person, ahead." At most 14 words. Empty string if nothing has changed since what you said last, or if you are reporting a product.
-Only describe what you can clearly see. Never invent.
-JSON: {"list_seen": null or {"item": "", "side": "", "shelf": "", "steps": 0, "price": null}, "near": "none|close|very_close", "obstacle": "1 or 2 words, or null", "obstacle_side": "left|ahead|right", "product": null or {"name": "2 to 4 words", "brand": "or null", "size": "as printed, or null", "price": "price in pounds if a price is visible, else null", "list_match": "matching list item, or null", "confidence": "high|medium|low"}, "say": "", "seeing": ["short names of things in view"]}`, c, { fast: true, max: 800 });
+`You are the eyes of a BLIND shopper in a supermarket, holding a phone camera at chest height. This is the camera view now.
+Shopping list: ${JSON.stringify(list)}. Also known: Evian water, Barebells protein bar, Rio Mare tuna.
+Last thing you said: ${JSON.stringify(lastScene || "nothing yet")}.
+Pick the ONE most useful thing to tell them now, in this order:
+1. "danger": a person, trolley, box on the floor, step, door or wall in their walking path, within about one step. Never a product held up to the camera.
+2. "held": a product held up to the camera, in a hand, or filling the middle of the picture, even if very close or a bit blurry. Read the brand and name on the pack.
+3. "list": a shopping-list item (any brand or size of it) or one of the known products, visible anywhere: on a shelf, in a fridge, small or far away.
+4. "products": products on the shelves whose names you can read.
+5. "scene": what is around them (aisle, shelves, people).
+6. "none": nothing new since the last thing you said.
+JSON only, short values:
+{"type": "danger|held|list|products|scene|none", "name": "brand and product, e.g. Evian still water; or the obstacle", "size": "as printed or null", "list_item": "the exact shopping-list item it matches, or null", "side": "left|ahead|right", "shelf": "top|middle|bottom|null", "price": price on the pack or shelf label as a number, or null, "say": "for products or scene: at most 12 words with left/ahead/right and prices, e.g. Heinz beans, left, £1.20. Kellogg's cornflakes, right."}`, c, { fast: true, max: 800, tokens: 400 });
         if (!walking || gen !== walkGen) return;
         guideFails = 0;
-        const seeing = Array.isArray(r.seeing) ? r.seeing.slice(0, 8) : [];
-        $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · " + (seeing.length ? "Seeing now: " + seeing.join(", ") : "Seeing now: nothing I can name yet");
-        const sd = ["left", "right"].includes(r.obstacle_side) ? r.obstacle_side : "ahead";
-        const hasProduct = r.product && ok(r.product.name) && mode !== "read";
-        const ls = r.list_seen && typeof r.list_seen === "object" ? r.list_seen : null;
-        let lsItem = ls && !hasProduct ? findOnList(ls.item) : null;
-        if (!lsItem && ls && !hasProduct && testStoreItem(ls.item)) lsItem = { name: testStoreItem(ls.item).name, offList: true };
-        if (!hasProduct && r.near === "very_close" && !(lsItem && +ls.steps === 0)) warnNow(ok(r.obstacle) ? bare(String(r.obstacle).toLowerCase()) : "something", 2, sd);
-        else if (lsItem) {
-          // A list item is on the shelf: say where it is and how to reach it
-          const now = Date.now(), key = lsItem.name + ":" + ls.side + ":" + ls.shelf;
+        const type = String(r.type || "none"), name = ok(r.name) ? String(r.name) : "";
+        logEv("Guide: " + type + (name ? " · " + name : "") + (r.list_item && r.list_item !== "null" ? " · list: " + r.list_item : ""));
+        $("seeing").hidden = false; $("seeing").textContent = "⚠ Live guide on · " + (name || r.say || "looking…");
+        const sd = ["left", "right"].includes(r.side) ? r.side : "ahead";
+        if (type === "danger") warnNow(name ? bare(name.toLowerCase()) : "something", 2, sd);
+        else if (type === "held" && name && mode !== "read") {
+          const key = norm(name); const now = Date.now();
+          if (key !== lastProduct.key || now - lastProduct.t > 20000) {
+            lastProduct = { key, t: now };
+            const li = findOnList(r.list_item) || findOnList(name);
+            showMatch({ readable: true, product: name, size: r.size, price: r.price, list_match: li ? li.name : null, confidence: "high", auto: true });
+          }
+        } else if (type === "list" && name) {
+          let lsItem = findOnList(r.list_item) || findOnList(name);
+          if (!lsItem && testStoreItem(name)) lsItem = { name: testStoreItem(name).name, offList: true };
+          if (!lsItem) lsItem = { name, offList: true };
+          const now = Date.now(), key = lsItem.name + ":" + sd + ":" + r.shelf;
           if (key !== lastListSeen.key || now - lastListSeen.t > 10000) {
             lastListSeen = { key, t: now };
-            const side2 = ["left", "right"].includes(ls.side) ? "on your " + ls.side : "ahead";
-            const shelf = ["top", "middle", "bottom"].includes(ls.shelf) ? `, ${ls.shelf} shelf` : ls.shelf === "floor" ? ", on the floor" : "";
-            const st = testStoreItem(lsItem.name), steps = Math.round(+ls.steps || 0);
-            const shelfPrice = st ? st.price : num(ls.price);
-            const reach = steps > 0 ? ` About ${steps} step${steps === 1 ? "" : "s"} away.` : ls.side === "left" ? " Reach to your left." : ls.side === "right" ? " Reach to your right." : " Reach straight ahead.";
+            const side2 = sd === "ahead" ? "ahead" : "on your " + sd;
+            const shelf = ["top", "middle", "bottom"].includes(r.shelf) ? `, ${r.shelf} shelf` : "";
+            const st = testStoreItem(lsItem.name) || testStoreItem(name);
+            const price = st ? st.price : num(r.price);
             const alg = st && (st.allergens || []).filter(x => ALLERGIES.includes(x)).join(" and ");
-            const msg = alg ? `${cap(st.name)}, ${side2}${shelf}. ${lsItem.offList ? "It" : "It's on your list, but it"} contains ${alg}. You're allergic to ${alg}. Look for another option.`
-              : lsItem.offList ? `${cap(st.name)}, ${side2}${shelf}. ${pence(st.price)}. Not on your list.`
-              : `${cap(st ? st.name : lsItem.name)}, ${side2}${shelf}. ${shelfPrice != null ? pence(shelfPrice) + ". " : ""}On your list.${reach} Hold it up to the camera.`;
-            logEv("List item seen: " + msg);
+            const nm = cap(st ? st.name : name);
+            const msg = alg ? `${nm}, ${side2}${shelf}. ${lsItem.offList ? "It" : "It's on your list, but it"} contains ${alg}. You're allergic to ${alg}. Look for another option.`
+              : lsItem.offList ? `${nm}, ${side2}${shelf}.${price != null ? " " + pence(price) + "." : ""}`
+              : `${nm}, ${side2}${shelf}.${price != null ? " " + pence(price) + "." : ""} On your list. Reach to your ${sd === "ahead" ? "front" : sd}, and hold it up to the camera.`;
             $("statusIc").textContent = "★"; $("statusText").textContent = msg; $("statusBox").classList.remove("error");
             try { navigator.vibrate && navigator.vibrate([90, 60, 90]); } catch (_) {}
             if (settings.voice === "sr") $("live").textContent = msg;
-            else if (settings.voice === "app" && window.speechSynthesis) { try { speechSynthesis.cancel(); } catch (_) {} beep(990, 90).then(() => { if (!walking) return; const u = applyVoice(new SpeechSynthesisUtterance(msg)); speechSynthesis.speak(u); }); }
+            else if (settings.voice === "app" && window.speechSynthesis) { try { speechSynthesis.cancel(); } catch (_) {} beep(990, 90).then(() => { if (!walking) return; speechSynthesis.speak(applyVoice(new SpeechSynthesisUtterance(msg))); }); }
           }
-        }
-        else if (!hasProduct && (r.near === "very_close" || r.near === "close")) warnNow(ok(r.obstacle) ? bare(String(r.obstacle).toLowerCase()) : "something", r.near === "very_close" ? 2 : 1, sd);
-        else if (hasProduct) {
-          const key = norm(r.product.name + " " + (r.product.brand || "")); const now = Date.now();
-          if (key !== lastProduct.key || now - lastProduct.t > 20000) {
-            lastProduct = { key, t: now }; logEv("Product seen: " + r.product.name);
-            const li = findOnList(r.product.list_match) || findOnList([r.product.brand, r.product.name].filter(ok).join(" "));
-            showMatch({ readable: true, product: r.product.name, brand: r.product.brand, size: r.product.size, price: r.product.price, list_match: li ? li.name : null, confidence: r.product.confidence || "medium", auto: true });
-          }
-        } else {
-          const msg = String(r.say || "").trim();
+        } else if (type === "products" || type === "scene") {
+          const msg = String(r.say || name || "").trim();
           const speaking = window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending);
           if (msg && norm(msg) !== norm(lastScene) && Date.now() - lastWarn.t > 2500 && !speaking) {
             lastScene = msg;
@@ -1828,6 +1826,7 @@ JSON: {"list_seen": null or {"item": "", "side": "", "shelf": "", "steps": 0, "p
         }
       } catch (e) {
         logEv("Live guide: " + (e && (e.code || e.message)));
+        if (e && (e.code === "invalid_json" || e instanceof SyntaxError)) { await sleep(200); continue; }
         if (e && ["bad_key", "no_credit"].includes(e.code)) { visionFailed(e); if (walking && gen === walkGen) startPhoneWalk(true); return; }
         if (++guideFails >= 4) { visionFailed({ code: "network" }); if (walking && gen === walkGen) startPhoneWalk(true); return; }
         await sleep(1000);
